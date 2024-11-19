@@ -1,0 +1,84 @@
+[x] Frustum Test: sodium-rs/core/src/graph/local/mod.rs
+    - make sure not to do frustum tests for tiles that are too small (level 0)
+
+[ ] Fog Test
+    - same note as frustum tests
+
+[x] Early Exits:
+    - Skip when incoming edges are all 0s
+    - Exit loop early when traversal state doesn't change
+    - Exit loop early when all 1s (hmm)
+
+[x] Downsampling/Up-Mipping: sodium-rs/core/src/graph/tile.rs
+
+[x] Upsampling/Down-Mipping: sodium-rs/core/src/graph/tile.rs
+
+[-] Top Level Iteration: sodium-zig-frustum-raster/src/tile_iteration.zig
+    - need to move to rust
+
+[x] Child Iteration: https://godbolt.org/z/z14ETb8r6 sodium-rs/core/src/graph/tile.rs
+    - threshold for when higher res should be used. should this also be dependent on camera pos?
+
+[x] Shift Operations: https://godbolt.org/z/EqdaMabjM sodium-rs/core/src/graph/tile.rs
+
+[x] Create Edge Data from Neighboring Tiles https://godbolt.org/z/v7jvonTKn sodium-rs/core/src/graph/tile.rs
+
+[ ] Create Masks for Processing Tiles on Planes and Axes
+
+[x] Data Structures and Layout: sodium-rs/structure-thoughts.rs sodium-rs/core/src/graph/tile.rs sodium-rs/core/src/graph/mod.rs
+
+[x] Morton Indexed Tile Indices: sodium-rs/src/graph/local/coords.rs
+
+[x] Main BFS Algorithm: sodium-rs/core/src/graph/tile.rs
+    - https://godbolt.org/z/vzsjxbb6h
+    - https://godbolt.org/z/rssq4P3dM
+    
+[-] Building Section List and Sending to Java
+    - ideas to set full tile in bit array?
+    - make fully packed?
+
+[-] Redesign FFI API
+    - Rename package to caffeinemc
+
+[-] Graph.process_tile
+    - if level > 0 && (frustum fails || fog fails), set as "Skipped" and skip
+    - if tile.children_to_traverse != 0b11111111, traverse current tile, otherwise set to "Upmip"
+    - if not level 0 and tile.children_to_traverse != 0b00000000, iterate and traverse children recursively
+    - on the way back up, downscale child traversal data and insert into parent traversal data
+    - alternatively, save this step for later by calculating the downscale results lazily
+
+[-] Tile.get_incoming_edge
+    - SPECIAL CASE: "Skipped": all 0s or all 1s (fast path)
+    - UPMIPPING/DOWNSCALING, SEPARATE RECURSIVE FUNCTION (if "Traversed" or "Upmip"):
+    - edge_mask represents a mask of potential children on that edge, based on the direction of the edge
+    - edge_children = tile.children_to_traverse & edge_mask
+    - if tile.upmipped_children & edge_children == edge_children, we're done, use current traversal data
+    - iterate edge_children and recurse down
+    - tile.upmipped_children |= edge_children
+    - on the way back up, downscale child traversal data and insert into parent traversal data
+    - DOWNMIPPING/UPSCALING (if "Uninitialized" or "Downmip"):
+    - go up levels until we hit "Traversed", "Skipped", or "Downmip"
+    - if "Skipped", propagate 0s down the chain repeatedly
+    - if "Traversed" or "Downmip", upscale back down the chain repeatedly, masking the traversal data with the opaque blocks
+    - for each "Uninitialized" in the chain, set to "Downmip", including base level
+    - nvm // tile.downmipped_children |= child for each level
+
+[ ] Rewrite Context
+
+[ ] Graph.combine_incoming_edges
+
+[x] Refactor direction to work with const generics
+
+[x] Fast coordinate stepping sodium-rs/core/src/graph/coords.rs https://godbolt.org/z/PcrTWdcc6
+
+LATER:
+
+[ ] Multiversioning
+
+[ ] Stop Java from Generating Visibility Lists (if possible)
+
+[ ] Move from Nightly to Stable
+    - Requires full move from std::simd to std::arch, or a library equivalent
+
+[ ] Fast Paths for Simple Tiles
+    - Reintroduce "Skipped" state? excluded for simplicity for now.

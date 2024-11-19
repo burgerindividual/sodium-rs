@@ -1,0 +1,3 @@
+[build]
+# "-Zub-checks"
+rustflags = ["-Ctarget-cpu=x86-64-v3"]

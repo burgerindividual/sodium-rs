@@ -1,0 +1,41 @@
+[package]
+name = "sodium_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.dev]
+opt-level = 0
+panic = "abort"
+lto = "thin"
+debug-assertions = true
+
+[profile.test]
+inherits = "dev"
+
+[profile.release]
+panic = "abort"
+debug = true
+lto = "fat"
+codegen-units = 1
+
+[profile.asm]
+inherits = "release"
+lto = "off"
+
+[profile.production]
+inherits = "release"
+lto = "fat"
+debug = false
+strip = "debuginfo"
+
+[dependencies]
+# Using these dependencies directly gives us access to setting features.
+core_simd = { git = "https://github.com/rust-lang/portable-simd.git" }
+std_float = { git = "https://github.com/rust-lang/portable-simd.git" }
+# crash-handler = "0.6.2"
+
+[dev-dependencies]
+rand = "0.8.5"
