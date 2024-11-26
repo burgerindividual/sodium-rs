@@ -10,7 +10,8 @@ pub struct GraphSearchContext {
 
     // the camera coords relative to the local origin, which is the (0, 0, 0) point of the
     // graph.
-    pub camera_coords: f32x3,
+    pub camera_coords_int: u16x3,
+    pub camera_coords_frac: f32x3,
     pub camera_section_coords: LocalTileCoords<0>,
     pub camera_section_index: LocalTileIndex<0>,
 
@@ -126,38 +127,40 @@ impl GraphSearchContext {
         }
     }
 
-    pub fn test_node<const LEVEL: u8>(
+    pub fn test_node(
         &self,
-        local_node_index: LocalTileIndex,
-    ) -> BoundsCheckResult {
-        let local_section_coords = local_node_index.unpack_section();
+        coords: LocalTileCoords,
+        level: u8,
+        parent_test_results: CombinedTestResults,
+    ) -> CombinedTestResults {
+        let relative_bounds = self.tile_get_relative_bounds(coords, level);
 
-        let bounds = self.node_get_local_bounds::<LEVEL>(local_section_coords);
+        let mut results = CombinedTestResults(0);
 
-        let mut result = self.bounds_inside_fog::<LEVEL>(bounds);
+        self.bounds_inside_world_height(coords, level);
 
-        if result != BoundsCheckResult::Outside {
-            result = result.combine(self.frustum.test_box(bounds));
+        if results == CombinedTestResults::OUTSIDE {
+            return results;
         }
 
-        if result != BoundsCheckResult::Outside {
-            result = result.combine(self.bounds_inside_world_height::<LEVEL>(local_section_coords));
+        self.frustum.test_box(bounds);
+
+        if results == CombinedTestResults::OUTSIDE {
+            return results;
         }
 
-        result
+        self.bounds_inside_fog::<LEVEL>(bounds);
+
+        results
     }
 
-    fn bounds_inside_world_height<const LEVEL: u8>(
-        &self,
-        local_section_coords: LocalTileCoords<0>,
-    ) -> BoundsCheckResult {
+    fn bounds_inside_world_height(&self, coords: LocalTileCoords, level: u8) -> BoundsCheckResult {
         let node_min_y = local_section_coords.y() as u32;
         let node_max_y = node_min_y + (1 << LEVEL) - 1;
-        let world_min_y = self.world_bottom_section_y as u32;
         let world_max_y = self.world_top_section_y as u32;
 
-        let min_in_bounds = (node_min_y >= world_min_y) & (node_min_y <= world_max_y);
-        let max_in_bounds = (node_max_y >= world_min_y) & (node_max_y <= world_max_y);
+        let min_in_bounds = node_min_y <= world_max_y;
+        let max_in_bounds = node_max_y <= world_max_y;
 
         // in normal circumstances, this really shouldn't ever return OUTSIDE
         unsafe { BoundsCheckResult::from_int_unchecked(min_in_bounds as u8 + max_in_bounds as u8) }
@@ -165,9 +168,10 @@ impl GraphSearchContext {
 
     // this only cares about the x and z axis
     // FIXME: use this algo https://github.com/CaffeineMC/sodium-fabric/blob/dd25399c139004e863beb8a2195b9d80b847d95c/common/src/main/java/net/caffeinemc/mods/sodium/client/render/chunk/occlusion/OcclusionCuller.java#L153
-    pub fn bounds_inside_fog<const LEVEL: u8>(
+    fn bounds_inside_fog(
         &self,
         relative_bounds: RelativeBoundingBox,
+        level: u8,
     ) -> BoundsCheckResult {
         // find closest to (0,0) because the bounding box coordinates are relative to
         // the camera
@@ -203,11 +207,7 @@ impl GraphSearchContext {
         }
     }
 
-    pub fn tile_get_relative_bounds(
-        &self,
-        coords: LocalTileCoords,
-        level: u8,
-    ) -> RelativeBoundingBox {
+    fn tile_get_relative_bounds(&self, coords: LocalTileCoords, level: u8) -> RelativeBoundingBox {
         let tile_factor = f32x3::splat(LocalTileCoords::block_length(level) as f32);
 
         let converted_pos = coords.0.cast::<f32>() * tile_factor;
@@ -295,7 +295,32 @@ impl LocalFrustum {
     }
 }
 
-#[repr(u8)]
+// If the value of this is not OUTSIDE, the following applies:
+// Each test is represented by a single bit in this bit set. For each test:
+// 1-bit = Partially inside, partially outside
+// 0-bit = Inside
+#[derive(PartialEq, Copy, Clone)]
+pub struct CombinedTestResults(u8);
+
+impl CombinedTestResults {
+    pub const OUTSIDE: Self = Self(0xFF);
+    pub const FRUSTUM_BIT: u8 = 0b00000001;
+    pub const FOG_BIT: u8 = 0b00000010;
+    pub const HEIGHT_BIT: u8 = 0b00000100;
+
+    pub fn is_partial<const BIT: u8>(self) -> bool {
+        bitset::contains(self.0, BIT)
+    }
+
+    pub fn is_inside<const BIT: u8>(self) -> bool {
+        !self.is_partial::<BIT>()
+    }
+
+    pub fn set<const BIT: u8>(&mut self, value: bool) {
+        self.0 |= (value as u8) << BIT.trailing_zeros();
+    }
+}
+
 #[derive(PartialEq)]
 pub enum BoundsCheckResult {
     Outside = 0,

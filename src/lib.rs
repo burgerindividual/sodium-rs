@@ -3,7 +3,8 @@
 // that may come in handy in the future
 #![allow(dead_code)]
 
-mod bit_array;
+mod results;
+mod bitset;
 mod ffi;
 mod graph;
 mod jni;

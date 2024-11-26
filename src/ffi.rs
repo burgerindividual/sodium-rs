@@ -6,7 +6,7 @@ use std::ptr;
 use context::GraphSearchContext;
 use core_simd::simd::Simd;
 
-use crate::bit_array::SectionBitArray;
+use crate::results::SectionBitArray;
 use crate::graph::*;
 use crate::jni::*;
 use crate::math::*;

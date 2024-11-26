@@ -1,5 +1,4 @@
-use std::hint::assert_unchecked;
-use std::mem::transmute;
+use std::{hint::assert_unchecked, mem::MaybeUninit};
 use std::num::NonZero;
 
 use core_simd::simd::prelude::*;
@@ -91,9 +90,15 @@ impl GraphCoordSpace {
         unsafe {
             use std::arch::x86_64::*;
 
-            // slightly faster on some platforms than _mm256_set1_epi64
-            let broadcasted_coords =
-                _mm256_broadcastsi128_si256(_mm_cvtsi64_si128(transmute(coords)));
+            // the compiler is known to shit itself when coming across the line below. it's very fragile.
+            // currently, this produces optimal codegen.
+            #[allow(invalid_value)] // yeah, we know
+            let broadcasted_coords = simd_swizzle!(
+                coords.0,
+                Simd::splat(MaybeUninit::uninit().assume_init()),
+                [0, 1, 2, 3, 3, 3, 3, 3, 0, 1, 2, 3, 3, 3, 3, 3,]
+            )
+            .into();
 
             // allocate one byte per bit for each element. each element is still has its individual
             // bits in linear ordering, but the bytes in the vector are in morton ordering.
@@ -246,5 +251,40 @@ impl LocalTileIndex {
 
     pub fn child_number(self) -> u8 {
         self.0 as u8 & 0b111
+    }
+
+    pub fn unordered_child_iter(self, children_present: u8) -> UnorderedChildIter {
+        UnorderedChildIter::new(self, children_present)
+    }
+}
+
+pub struct UnorderedChildIter {
+    parent_index_high_bits: u32,
+    children_present: u8,
+}
+
+impl UnorderedChildIter {
+    pub fn new(index: LocalTileIndex, children_present: u8) -> Self {
+        Self {
+            parent_index_high_bits: index.to_child_level().0,
+            children_present,
+        }
+    }
+}
+
+impl Iterator for UnorderedChildIter {
+    type Item = (LocalTileIndex, u8);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Description of the iteration approach on daniel lemire's blog
+        // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
+        if self.children_present != 0 {
+            let child_number = self.children_present.trailing_zeros();
+            self.children_present &= self.children_present - 1;
+            let child_index = LocalTileIndex(self.parent_index_high_bits | child_number);
+            Some((child_index, child_number as u8))
+        } else {
+            None
+        }
     }
 }

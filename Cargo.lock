@@ -17,7 +17,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "core_simd"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#b049c5097e515f45503ac5a8d34de5f0ef75c25e"
+source = "git+https://github.com/burgerindividual/portable-simd.git#45e21251f5bcade1867b7e4808881c472bbf72e6"
 
 [[package]]
 name = "getrandom"
@@ -105,7 +105,7 @@ dependencies = [
 [[package]]
 name = "std_float"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#b049c5097e515f45503ac5a8d34de5f0ef75c25e"
+source = "git+https://github.com/burgerindividual/portable-simd.git#45e21251f5bcade1867b7e4808881c472bbf72e6"
 dependencies = [
  "core_simd",
 ]

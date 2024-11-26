@@ -3,6 +3,8 @@ use std::ptr::addr_of_mut;
 
 use core_simd::simd::prelude::*;
 
+use crate::bitset;
+
 use super::coords::{LocalTileCoords, LocalTileIndex};
 use super::{direction, u16x3};
 
@@ -407,7 +409,9 @@ pub struct Tile {
 pub enum TraversalStatus {
     Uninitialized,
     Traversed { children_upmipped: u8 },
+    // is this one really necessary? it could probably be merged with Traversed and renamed
     Upmipped { children_upmipped: u8 },
+
     // for this to be worth using, the skipped status needs to be propagated down immediately (i
     // think?). when a tile is marked as skipped, the contents of the first byte will either
     // be all 0s or all 1s.
@@ -429,7 +433,7 @@ impl Default for Tile {
 }
 
 impl Tile {
-    pub fn traverse<const DIRECTIONS: u8>(
+    pub fn traverse<const DIRECTION_SET: u8>(
         &mut self,
         combined_edge_data: u8x64,
         direction_masks: &[u8x64; 6],
@@ -452,7 +456,7 @@ impl Tile {
 
         let opaque_nodes = self.opaque_nodes.0;
 
-        // if DIRECTIONS.count_ones() == 3 {
+        // if DIRECTION_SET.count_ones() == 3 {
         // TODO OPT: fast path for air in octants: if opaque is all 0s, and the corner
         // bit in the edge data is 1, the whole thing will be 1s
         // }
@@ -465,15 +469,15 @@ impl Tile {
         let mut pos_z_mask = opaque_nodes;
 
         // we need to add direction-specific masks when there are pairs of opposing directions
-        if direction::contains(DIRECTIONS, direction::NEG_X | direction::POS_X) {
+        if bitset::contains(DIRECTION_SET, direction::NEG_X | direction::POS_X) {
             neg_x_mask |= direction_masks[direction::NEG_X as usize];
             pos_x_mask |= direction_masks[direction::POS_X as usize];
         }
-        if direction::contains(DIRECTIONS, direction::NEG_Y | direction::POS_Y) {
+        if bitset::contains(DIRECTION_SET, direction::NEG_Y | direction::POS_Y) {
             neg_y_mask |= direction_masks[direction::NEG_Y as usize];
             pos_y_mask |= direction_masks[direction::POS_Y as usize];
         }
-        if direction::contains(DIRECTIONS, direction::NEG_Z | direction::POS_Y) {
+        if bitset::contains(DIRECTION_SET, direction::NEG_Z | direction::POS_Y) {
             neg_z_mask |= direction_masks[direction::NEG_Z as usize];
             pos_z_mask |= direction_masks[direction::POS_Z as usize];
         }
@@ -484,22 +488,22 @@ impl Tile {
         for _ in 0..24 {
             let previous_traversed_nodes = traversed_nodes;
 
-            if direction::contains(DIRECTIONS, direction::NEG_X) {
+            if bitset::contains(DIRECTION_SET, direction::NEG_X) {
                 traversed_nodes |= NodeStorage::shift_neg_x(traversed_nodes) & neg_x_mask;
             }
-            if direction::contains(DIRECTIONS, direction::NEG_Y) {
+            if bitset::contains(DIRECTION_SET, direction::NEG_Y) {
                 traversed_nodes |= NodeStorage::shift_neg_y(traversed_nodes) & neg_y_mask;
             }
-            if direction::contains(DIRECTIONS, direction::NEG_Z) {
+            if bitset::contains(DIRECTION_SET, direction::NEG_Z) {
                 traversed_nodes |= NodeStorage::shift_neg_z(traversed_nodes) & neg_z_mask;
             }
-            if direction::contains(DIRECTIONS, direction::POS_X) {
+            if bitset::contains(DIRECTION_SET, direction::POS_X) {
                 traversed_nodes |= NodeStorage::shift_pos_x(traversed_nodes) & pos_x_mask;
             }
-            if direction::contains(DIRECTIONS, direction::POS_Y) {
+            if bitset::contains(DIRECTION_SET, direction::POS_Y) {
                 traversed_nodes |= NodeStorage::shift_pos_y(traversed_nodes) & pos_y_mask;
             }
-            if direction::contains(DIRECTIONS, direction::POS_Z) {
+            if bitset::contains(DIRECTION_SET, direction::POS_Z) {
                 traversed_nodes |= NodeStorage::shift_pos_z(traversed_nodes) & pos_z_mask;
             }
 
@@ -516,10 +520,10 @@ impl Tile {
         return true;
     }
 
-    pub fn sorted_child_iter<const CHILD_LEVEL: u8>(
+    pub fn sorted_child_iter(
         &self,
-        index: &LocalTileIndex,
-        coords: &LocalTileCoords,
+        index: LocalTileIndex,
+        coords: LocalTileCoords,
         camera_block_coords: u16x3,
         level: u8,
     ) -> SortedChildIterator {
@@ -544,8 +548,8 @@ pub struct SortedChildIterator {
 
 impl SortedChildIterator {
     pub fn new(
-        index: &LocalTileIndex,
-        coords: &LocalTileCoords,
+        index: LocalTileIndex,
+        coords: LocalTileCoords,
         camera_block_coords: u16x3,
         children_present: u8,
         level: u8,
@@ -593,7 +597,6 @@ impl SortedChildIterator {
 }
 
 impl Iterator for SortedChildIterator {
-    // TODO: also return LocalTileCoords, ponder how this works.
     type Item = (LocalTileIndex, LocalTileCoords);
 
     fn next(&mut self) -> Option<Self::Item> {

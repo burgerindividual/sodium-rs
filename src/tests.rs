@@ -356,4 +356,5 @@ fn edge_move_test() {
     }
 }
 
-// TODO: test clearing the graph, test searching traversed nodes, test axis and plane masks, test coordinate stepping
+// TODO: test clearing the graph, test searching traversed nodes, test axis and plane masks, test coordinate stepping,
+//  test sorted child iteration
