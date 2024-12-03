@@ -26,7 +26,9 @@ pub type f32x3 = Simd<f32, 3>;
 pub type f64x3 = Simd<f64, 3>;
 
 // additional useful shorthands
+pub type u8x6 = Simd<u32, 6>;
 pub type f32x6 = Simd<f32, 6>;
+pub type u32x6 = Simd<u32, 6>;
 
 // aligned versions of some of the vector types
 // TODO: should we just get rid of this and patch portable simd? should we just not care?

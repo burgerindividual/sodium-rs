@@ -6,12 +6,12 @@ use std::ptr;
 use context::GraphSearchContext;
 use core_simd::simd::Simd;
 
-use crate::results::SectionBitArray;
 use crate::graph::*;
 use crate::jni::*;
 use crate::math::*;
 use crate::mem::LibcAllocVtable;
 use crate::panic::PanicHandlerFn;
+use crate::results::SectionBitArray;
 
 #[repr(C)]
 struct FFISlice<T> {
@@ -88,6 +88,8 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_setPani
 pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphCreate(
     _: *mut JEnv,
     _: *mut JClass,
+    world_bottom_section_y: Jbyte,
+    world_top_section_y: Jbyte,
 ) -> JPtrMut<Graph> {
     let graph = Box::new(Graph::new());
 
@@ -126,13 +128,11 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphRe
 pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSearch(
     _: *mut JEnv,
     _: *mut JClass,
+    return_value: JPtrMut<FFISectionBitArray>,
     graph: JPtrMut<Graph>,
     frustum: JPtr<FFIFrustum>,
-    search_distance: Jfloat,
-    world_bottom_section_y: Jbyte,
-    world_top_section_y: Jbyte,
+    fog_distance: Jfloat,
     use_occlusion_culling: Jboolean,
-    return_value: JPtrMut<FFISectionBitArray>,
 ) {
     let graph = graph.into_mut_ref();
     let frustum = frustum.as_ref();
@@ -149,7 +149,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSe
     let coord_context = GraphSearchContext::new(
         simd_frustum_planes,
         simd_camera_world_pos,
-        search_distance,
+        fog_distance,
         world_bottom_section_y,
         world_top_section_y,
     );

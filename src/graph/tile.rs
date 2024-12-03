@@ -470,16 +470,16 @@ impl Tile {
 
         // we need to add direction-specific masks when there are pairs of opposing directions
         if bitset::contains(DIRECTION_SET, direction::NEG_X | direction::POS_X) {
-            neg_x_mask |= direction_masks[direction::NEG_X as usize];
-            pos_x_mask |= direction_masks[direction::POS_X as usize];
+            neg_x_mask |= direction_masks[direction::to_index(direction::NEG_X) as usize];
+            pos_x_mask |= direction_masks[direction::to_index(direction::POS_X) as usize];
         }
         if bitset::contains(DIRECTION_SET, direction::NEG_Y | direction::POS_Y) {
-            neg_y_mask |= direction_masks[direction::NEG_Y as usize];
-            pos_y_mask |= direction_masks[direction::POS_Y as usize];
+            neg_y_mask |= direction_masks[direction::to_index(direction::NEG_Y) as usize];
+            pos_y_mask |= direction_masks[direction::to_index(direction::POS_Y) as usize];
         }
         if bitset::contains(DIRECTION_SET, direction::NEG_Z | direction::POS_Y) {
-            neg_z_mask |= direction_masks[direction::NEG_Z as usize];
-            pos_z_mask |= direction_masks[direction::POS_Z as usize];
+            neg_z_mask |= direction_masks[direction::to_index(direction::NEG_Z) as usize];
+            pos_z_mask |= direction_masks[direction::to_index(direction::POS_Z) as usize];
         }
 
         let mut traversed_nodes = combined_edge_data & opaque_nodes;

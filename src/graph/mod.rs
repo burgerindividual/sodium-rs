@@ -1,6 +1,6 @@
 use std::hint::unreachable_unchecked;
 
-use context::GraphSearchContext;
+use context::{CombinedTestResults, GraphSearchContext};
 use coords::{GraphCoordSpace, LocalTileIndex};
 use core_simd::simd::prelude::*;
 use tile::{NodeStorage, Tile, TraversalStatus};
@@ -58,15 +58,19 @@ impl Graph {
 
     fn iterate_tiles(&mut self, context: &GraphSearchContext) {}
 
-    fn process_tile<const DIRECTION_SET: u8>(&mut self, context: &GraphSearchContext, coords: LocalTileCoords, level: u8) {
+    fn process_tile<const DIRECTION_SET: u8>(
+        &mut self,
+        context: &GraphSearchContext,
+        coords: LocalTileCoords,
+        level: u8,
+        parent_test_results: CombinedTestResults,
+    ) {
         // Test frustum and fog first, before touching any edge data
         // if the test fails, it should be considerd "Traversed" with the traversed nodes all set to 0
         // TODO OPT: if all input edges are blank, immediately mark the tile skipped and move on
 
         if level >= Self::EARLY_CHECKS_LOWEST_LEVEL {
-            // TODO: figure out a state machine for the output of this,
-            // which can be passed in from the parent node's result
-            let test_result = context.test_node(coords, level);
+            let test_result = context.test_node(&self.coord_space, coords, level, parent_test_results);
         }
     }
 
@@ -255,8 +259,8 @@ impl Graph {
     // anyway, right?
     // NOTE: not thread safe, make sure
     pub fn set_section(&mut self, section_coords: i32x3, opaque_block_bytes: &[u8; 512]) {
-        let local_coords = self.coord_space.section_to_local_coords(section_coords);
-        let level_1_index = self.coord_space.pack_index(local_coords);
+        let level_1_coords = self.coord_space.section_to_local_coords(section_coords);
+        let level_1_index = self.coord_space.pack_index(level_1_coords);
         let parent_index_high_bits = level_1_index.to_child_level().0;
 
         let level_1_tile = &mut self.level_1[level_1_index.to_usize()];

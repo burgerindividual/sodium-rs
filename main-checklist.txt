@@ -1,7 +1,7 @@
 [x] Frustum Test: sodium-rs/src/graph/local/mod.rs
     - make sure not to do frustum tests for tiles that are too small (level 0)
 
-[ ] Fog Test
+[x] Fog Test
     - same note as frustum tests
 
 [x] Early Exits:
@@ -13,17 +13,12 @@
 
 [x] Upsampling/Down-Mipping: sodium-rs/src/graph/tile.rs
 
-[-] Top Level Iteration: sodium-zig-frustum-raster/src/tile_iteration.zig
-    - need to move to rust
-
 [x] Child Iteration: https://godbolt.org/z/z14ETb8r6 sodium-rs/src/graph/tile.rs
     - threshold for when higher res should be used. should this also be dependent on camera pos?
 
 [x] Shift Operations: https://godbolt.org/z/EqdaMabjM sodium-rs/src/graph/tile.rs
 
 [x] Create Edge Data from Neighboring Tiles https://godbolt.org/z/v7jvonTKn sodium-rs/src/graph/tile.rs
-
-[ ] Create Masks for Processing Tiles on Planes and Axes
 
 [x] Data Structures and Layout: sodium-rs/src/graph/tile.rs sodium-rs/src/graph/mod.rs
 
@@ -32,20 +27,6 @@
 [x] Main BFS Algorithm: sodium-rs/src/graph/tile.rs
     - https://godbolt.org/z/vzsjxbb6h
     - https://godbolt.org/z/rssq4P3dM
-    
-[-] Building Section List and Sending to Java
-    - ideas to set full tile in bit array?
-    - make fully packed?
-
-[-] Redesign FFI API
-    - Rename package to caffeinemc
-
-[-] Graph.process_tile
-    - if level > 0 && (frustum fails || fog fails), set as "Skipped" and skip
-    - if tile.children_to_traverse != 0b11111111, traverse current tile, otherwise set to "Upmip"
-    - if not level 0 and tile.children_to_traverse != 0b00000000, iterate and traverse children recursively
-    - on the way back up, downscale child traversal data and insert into parent traversal data
-    - alternatively, save this step for later by calculating the downscale results lazily
 
 [x] Tile.get_incoming_edge
     - SPECIAL CASE: "Skipped": all 0s or all 1s (fast path)
@@ -63,17 +44,40 @@
     - for each "Uninitialized" in the chain, set to "Downmip", including base level
     - nvm // tile.downmipped_children |= child for each level
 
-[ ] Rewrite Context
-
 [x] Graph.combine_incoming_edges
 
 [x] Refactor direction to work with const generics
 
 [x] Fast coordinate stepping sodium-rs/src/graph/coords.rs https://godbolt.org/z/PcrTWdcc6
 
+[-] Top Level Iteration: sodium-zig-frustum-raster/src/tile_iteration.zig
+    - need to move to rust
+
+[-] Building Section List and Sending to Java
+    - ideas to set full tile in bit array?
+    - make fully packed?
+
+[-] Redesign FFI API
+    - Rename package to caffeinemc
+    - check over all parameter names
+    - write with panama or jni in mind? ask jelly
+
+[-] Graph.process_tile
+    - if level > 0 && (frustum fails || fog fails), set as "Skipped" and skip
+    - if tile.children_to_traverse != 0b11111111, traverse current tile, otherwise set to "Upmip"
+    - if not level 0 and tile.children_to_traverse != 0b00000000, iterate and traverse children recursively
+    - on the way back up, downscale child traversal data and insert into parent traversal data
+    - alternatively, save this step for later by calculating the downscale results lazily
+
+[-] Rewrite Context
+
+[ ] Create Masks for Processing Tiles on Planes and Axes
+
 [ ] Graph::new
 
 [ ] Stupid version of Graph.clear
+
+[ ] Operation Javacide
 
 LATER:
 
@@ -92,3 +96,5 @@ LATER:
 [ ] Smarter version of Graph.clear
 
 [ ] Smarter version of Graph.remove_section
+
+[ ] Make "use occlusion culling" actually work for disabling in spectator mode

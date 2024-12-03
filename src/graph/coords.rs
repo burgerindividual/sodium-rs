@@ -1,9 +1,8 @@
 use std::{hint::assert_unchecked, mem::MaybeUninit};
-use std::num::NonZero;
 
 use core_simd::simd::prelude::*;
 
-use super::{i32x3, u16x3, u16x3a, u8x3, Coords3};
+use super::{direction, i32x3, u16x3, u16x3a, u8x3, Coords3};
 
 pub struct GraphCoordSpace {
     morton_swizzle_pattern: u8x32,
@@ -95,7 +94,7 @@ impl GraphCoordSpace {
             #[allow(invalid_value)] // yeah, we know
             let broadcasted_coords = simd_swizzle!(
                 coords.0,
-                Simd::splat(MaybeUninit::uninit().assume_init()),
+                MaybeUninit::uninit().assume_init(),
                 [0, 1, 2, 3, 3, 3, 3, 3, 0, 1, 2, 3, 3, 3, 3, 3,]
             )
             .into();
@@ -173,7 +172,7 @@ impl GraphCoordSpace {
         direction: u8,
         level: u8,
     ) -> LocalTileCoords {
-        let dir_index = unsafe { NonZero::new_unchecked(direction) }.trailing_zeros();
+        let dir_index = direction::to_index(direction);
         let shifted_byte = 0xFF_u64 << (dir_index * 8);
         let pos_selected = (shifted_byte >> 24) as u32 & 0x01_01_01;
         let neg_selected = shifted_byte as u32 & 0xFF_FF_FF;
