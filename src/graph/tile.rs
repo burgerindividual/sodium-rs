@@ -2,12 +2,12 @@ use std::array;
 use std::mem::transmute;
 use std::ptr::addr_of_mut;
 
-use core_simd::simd::{prelude::*, ToBytes};
-
-use crate::bitset;
+use core_simd::simd::prelude::*;
+use core_simd::simd::ToBytes;
 
 use super::coords::{LocalTileCoords, LocalTileIndex};
 use super::{direction, u16x3, Coords3};
+use crate::bitset;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NodeStorage(pub u8x64);
@@ -116,8 +116,8 @@ impl NodeStorage {
             ]
         );
 
-        // if the quadrant Y coordinate is 1, toggle each lane's on or off state, shifting the
-        // output by 4
+        // if the quadrant Y coordinate is 1, toggle each lane's on or off state,
+        // shifting the output by 4
         let y_shift = (dst_octant & 0b010) != 0;
         let dst_bytes_mask = (mask8x32::from_array([
             true, true, true, true, false, false, false, false, true, true, true, true, false,
@@ -159,7 +159,8 @@ impl NodeStorage {
 
     pub fn upscale(self, src_octant: u8) -> Self {
         // if the quadrant Z coordinate is 1, shift each index by 32.
-        // we can replicate this by choosing either the upper or lower half of the node data.
+        // we can replicate this by choosing either the upper or lower half of the node
+        // data.
         let z_shift = (src_octant & 0b001) as usize;
         let src_half: u8x32 = unsafe {
             let halves: [u8x32; 2] = transmute(self.0);
@@ -171,12 +172,12 @@ impl NodeStorage {
         let indices = u8x16::from_array([0, 0, 1, 1, 2, 2, 3, 3, 8, 8, 9, 9, 10, 10, 11, 11])
             + Simd::splat(y_shift);
 
-        // By dividing the swizzles into 128-bit chunks, we are guaranteeing that the indices do
-        // not cross 128-bit lane boundaries.
-        // On x86, this helps us, as VPSHUFB doesn't actually shuffle between 128-bit lanes.
-        // These swizzles, when unoptimized, would usually produce separate PSHUFB
-        // instructions, but we're hoping that the optimizer can pick up what we've
-        // done and combine them.
+        // By dividing the swizzles into 128-bit chunks, we are guaranteeing that the
+        // indices do not cross 128-bit lane boundaries.
+        // On x86, this helps us, as VPSHUFB doesn't actually shuffle between 128-bit
+        // lanes. These swizzles, when unoptimized, would usually produce
+        // separate PSHUFB instructions, but we're hoping that the optimizer can
+        // pick up what we've done and combine them.
         let shuffled: u8x32 = unsafe {
             let batches: [u8x16; 2] = transmute(src_half);
             let processed = batches.map(|vec| vec.swizzle_dyn(indices));
@@ -392,7 +393,8 @@ impl NodeStorage {
         )
     }
 
-    // a mask is necessary for each direction (6 directions) on each level (5 levels)
+    // a mask is necessary for each direction (6 directions) on each level (5
+    // levels)
     pub fn create_direction_masks(local_camera_pos_int: u16x3) -> [[u8x64; 6]; 5] {
         array::from_fn(|level| {
             // a tile has bounds of 8x8x8, so we restrict each axis to 0-7
@@ -514,7 +516,8 @@ impl Tile {
         let mut pos_y_mask = opaque_nodes;
         let mut pos_z_mask = opaque_nodes;
 
-        // we need to add direction-specific masks when there are pairs of opposing directions
+        // we need to add direction-specific masks when there are pairs of opposing
+        // directions
         if bitset::contains(DIRECTION_SET, direction::NEG_X | direction::POS_X) {
             neg_x_mask |= direction_masks[direction::to_index(direction::NEG_X) as usize];
             pos_x_mask |= direction_masks[direction::to_index(direction::POS_X) as usize];
@@ -530,7 +533,8 @@ impl Tile {
 
         let mut traversed_nodes = combined_edge_data & opaque_nodes;
 
-        // maximum of 24 steps to complete the bfs (TODO: is this really faster than a normal loop?)
+        // maximum of 24 steps to complete the bfs (TODO: is this really faster than a
+        // normal loop?)
         for _ in 0..24 {
             let previous_traversed_nodes = traversed_nodes;
 
@@ -561,8 +565,8 @@ impl Tile {
         self.traversed_nodes = NodeStorage(traversed_nodes);
 
         // if there is any edge data, the tile is visible
-        // (this whole method could probably be skipped for tiles that won't be relied upon)
-        // TODO: make sure this is sound with up and downscaling
+        // (this whole method could probably be skipped for tiles that won't be relied
+        // upon) TODO: make sure this is sound with up and downscaling
         return true;
     }
 
@@ -610,8 +614,8 @@ impl SortedChildIterator {
         let first_child_index = first_child_coords.to_bitmask() as u32;
 
         // broadcast first child to 8 "lanes".
-        // we only use the bottom 3 bits of each lane, but the lane width is 4 bits to allow for
-        // faster indexing.
+        // we only use the bottom 3 bits of each lane, but the lane width is 4 bits to
+        // allow for faster indexing.
         let mut children_index_low_bits =
             first_child_index * 0b0001_0001_0001_0001_0001_0001_0001_0001;
         // toggle different bits on specific axis to replicate addition or subtraction
@@ -619,8 +623,8 @@ impl SortedChildIterator {
         // in the next 3 lanes, the value is moved on 1 axis.
         // in the following 3 lanes, the value is moved on 2 axes.
         // in the final lane, the value is moved on 3 axes.
-        // this stays sorted by manhattan distance, because each move on an axis counts as 1 extra
-        // distance
+        // this stays sorted by manhattan distance, because each move on an axis counts
+        // as 1 extra distance
         children_index_low_bits ^= 0b0111_0101_0110_0011_0100_0010_0001_0000;
 
         // same concept as previous, but vertical instead of horizontal

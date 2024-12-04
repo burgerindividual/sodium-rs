@@ -6,11 +6,10 @@ pub struct GraphSearchContext {
     frustum: LocalFrustum,
 
     // pub global_region_offset: i32x3,
-
     fog_distance: f32,
 
-    // the camera coords (in blocks) relative to the local origin, which is the (0, 0, 0) point of the
-    // graph.
+    // the camera coords (in blocks) relative to the local origin, which is the (0, 0, 0) point of
+    // the graph.
     camera_pos_int: u16x3,
     camera_pos_frac: f32x3,
 
@@ -36,8 +35,8 @@ impl GraphSearchContext {
 
         let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
 
-        // direction_iter_counts: step render_dist amount on level 1, convert to level 3, subtract with 
-        // start tile. this can prolly be slow.
+        // direction_iter_counts: step render_dist amount on level 1, convert to level
+        // 3, subtract with start tile. this can prolly be slow.
 
         Self {
             frustum,

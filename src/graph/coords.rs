@@ -1,4 +1,5 @@
-use std::{hint::assert_unchecked, mem::MaybeUninit};
+use std::hint::assert_unchecked;
+use std::mem::MaybeUninit;
 
 use core_simd::simd::prelude::*;
 
@@ -86,8 +87,8 @@ impl GraphCoordSpace {
         unsafe {
             use std::arch::x86_64::*;
 
-            // the compiler is known to shit itself when coming across the line below. it's very fragile.
-            // currently, this produces optimal codegen.
+            // the compiler is known to shit itself when coming across the line below. it's
+            // very fragile. currently, this produces optimal codegen.
             #[allow(invalid_value)] // yeah, we know
             let broadcasted_coords = simd_swizzle!(
                 coords.0,
@@ -96,8 +97,9 @@ impl GraphCoordSpace {
             )
             .into();
 
-            // allocate one byte per bit for each element. each element is still has its individual
-            // bits in linear ordering, but the bytes in the vector are in morton ordering.
+            // allocate one byte per bit for each element. each element is still has its
+            // individual bits in linear ordering, but the bytes in the vector
+            // are in morton ordering.
             let expanded_bytes =
                 _mm256_shuffle_epi8(broadcasted_coords, self.morton_swizzle_pattern.into());
 
@@ -105,8 +107,8 @@ impl GraphCoordSpace {
             let expanded_morton_bits =
                 _mm256_and_si256(expanded_bytes, self.morton_bitmasks.into());
 
-            // check if masked bit is set (!= 0) or unset (== 0) for each lane, then pack each lane
-            // into one bit.
+            // check if masked bit is set (!= 0) or unset (== 0) for each lane, then pack
+            // each lane into one bit.
             let packed_morton_bits = !_mm256_movemask_epi8(_mm256_cmpeq_epi8(
                 expanded_morton_bits,
                 _mm256_setzero_si256(),
@@ -120,8 +122,9 @@ impl GraphCoordSpace {
             let broadcasted_coords =
                 simd_swizzle!(coords.0, Simd::splat(0), [0, 1, 2, 3, 3, 3, 3, 3,]);
 
-            // allocate one byte per bit for each element. each element is still has its individual
-            // bits in linear ordering, but the bytes in the vector are in morton ordering.
+            // allocate one byte per bit for each element. each element is still has its
+            // individual bits in linear ordering, but the bytes in the vector
+            // are in morton ordering.
             let expanded_bytes: u8x32 = unsafe {
                 let broadcasted_coords_bytes: u8x16 = transmute(broadcasted_coords);
                 let index_batches: [u8x16; 2] =
@@ -135,10 +138,10 @@ impl GraphCoordSpace {
             // isolate each bit necessary for morton ordering
             let expanded_morton_bits = expanded_bytes & self.morton_bitmasks;
 
-            // check if masked bit is set (!= 0) or unset (== 0) for each lane, then pack each lane
-            // into one bit.
-            // simd_eq and a NOT on the bitmask is used here, because on x86, it's faster than
-            // simd_neq
+            // check if masked bit is set (!= 0) or unset (== 0) for each lane, then pack
+            // each lane into one bit.
+            // simd_eq and a NOT on the bitmask is used here, because on x86, it's faster
+            // than simd_neq
             let packed_morton_bits =
                 !(expanded_morton_bits.simd_eq(Simd::splat(0)).to_bitmask() as u32);
 

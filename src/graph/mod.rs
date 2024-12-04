@@ -6,8 +6,9 @@ use core_simd::simd::prelude::*;
 use tile::{NodeStorage, Tile, TraversalStatus};
 
 use self::coords::LocalTileCoords;
+use crate::bitset;
+use crate::math::*;
 use crate::results::SectionBitArray;
-use crate::{bitset, math::*};
 
 pub mod context;
 pub mod coords;
@@ -65,11 +66,13 @@ impl Graph {
         parent_test_results: CombinedTestResults,
     ) {
         // Test frustum and fog first, before touching any edge data
-        // if the test fails, it should be considerd "Traversed" with the traversed nodes all set to 0
-        // TODO OPT: if all input edges are blank, immediately mark the tile skipped and move on
+        // if the test fails, it should be considerd "Traversed" with the traversed
+        // nodes all set to 0 TODO OPT: if all input edges are blank,
+        // immediately mark the tile skipped and move on
 
         if level >= Self::EARLY_CHECKS_LOWEST_LEVEL {
-            let test_result = context.test_node(&self.coord_space, coords, level, parent_test_results);
+            let test_result =
+                context.test_node(&self.coord_space, coords, level, parent_test_results);
         }
     }
 
@@ -135,7 +138,8 @@ impl Graph {
         }
     }
 
-    // the upward search here assumes that there is an upper level which has been traversed.
+    // the upward search here assumes that there is an upper level which has been
+    // traversed.
     fn get_traversed_nodes_down<const DIRECTION: u8>(
         &mut self,
         index: LocalTileIndex,
@@ -193,7 +197,8 @@ impl Graph {
         traversed_nodes_updated
     }
 
-    // the upward search here assumes that there is an upper level which has been traversed.
+    // the upward search here assumes that there is an upper level which has been
+    // traversed.
     fn get_traversed_nodes_up(&mut self, index: LocalTileIndex, level: u8) -> NodeStorage {
         let parent_index = index.to_parent_level();
         let parent_level = level + 1;
@@ -254,8 +259,8 @@ impl Graph {
         }
     }
 
-    // TODO: should this reset the traversal status of the nodes it affects? that'll get reset
-    // anyway, right?
+    // TODO: should this reset the traversal status of the nodes it affects? that'll
+    // get reset anyway, right?
     // NOTE: not thread safe, make sure
     pub fn set_section(&mut self, section_coords: i32x3, opaque_block_bytes: &[u8; 512]) {
         let level_1_coords = self.coord_space.section_to_local_coords(section_coords);
@@ -309,10 +314,11 @@ impl Graph {
     }
 
     pub fn remove_section(&mut self, section_coord: i32x3) {
-        // a removed section should be fully opaque to prevent traversal (maybe don't do this? hm.)
+        // a removed section should be fully opaque to prevent traversal (maybe don't do
+        // this? hm.)
         // TODO: write this directly to just set the tiles to Default::default()
-        // TODO: can the level 0 nodes just be kept the same, and the level 1 children just be
-        // toggled off?
+        // TODO: can the level 0 nodes just be kept the same, and the level 1 children
+        // just be toggled off?
         self.set_section(section_coord, &[0xFF; 512]);
     }
 }
