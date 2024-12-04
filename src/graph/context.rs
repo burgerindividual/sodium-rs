@@ -1,5 +1,4 @@
 use core_simd::simd::prelude::*;
-use std_float::StdFloat;
 
 use crate::graph::*;
 
@@ -18,6 +17,7 @@ pub struct GraphSearchContext {
     pub iter_start_tile: LocalTileCoords,
     pub direction_iter_counts: u8x6,
 
+    // TODO: actually use this
     pub use_occlusion_culling: bool,
 }
 
@@ -25,7 +25,7 @@ impl GraphSearchContext {
     pub fn new(
         coord_space: &GraphCoordSpace,
         frustum_planes: [f32x6; 4],
-        camera_pos_int: i32x3,
+        global_camera_pos_int: i32x3,
         camera_pos_frac: f32x3,
         fog_distance: f32,
         use_occlusion_culling: bool,
@@ -34,13 +34,15 @@ impl GraphSearchContext {
 
         let frustum = LocalFrustum::new(frustum_planes);
 
+        let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
+
         // direction_iter_counts: step render_dist amount on level 1, convert to level 3, subtract with 
         // start tile. this can prolly be slow.
 
         Self {
             frustum,
             fog_distance,
-            camera_pos_int: todo!(),
+            camera_pos_int,
             camera_pos_frac,
             iter_start_tile: todo!(),
             direction_iter_counts: todo!(),

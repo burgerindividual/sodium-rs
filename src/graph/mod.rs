@@ -21,9 +21,8 @@ pub struct Graph {
     level_3: Box<[Tile]>,
     level_4: Box<[Tile]>,
 
-    coord_space: GraphCoordSpace,
-
-    render_distance: u8,
+    pub coord_space: GraphCoordSpace,
+    pub render_distance: u8,
 
     pub results: SectionBitArray,
 }

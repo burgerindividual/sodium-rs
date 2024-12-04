@@ -30,11 +30,6 @@ pub type u8x6 = Simd<u32, 6>;
 pub type f32x6 = Simd<f32, 6>;
 pub type u32x6 = Simd<u32, 6>;
 
-// aligned versions of some of the vector types
-// TODO: should we just get rid of this and patch portable simd? should we just not care?
-#[repr(align(8))]
-pub struct u16x3a(pub u16x3);
-
 // additional declarations outside of traits for const usage
 pub const fn from_xyz<T: SimdElement>(x: T, y: T, z: T) -> Simd<T, 3> {
     Simd::from_array([x, y, z])

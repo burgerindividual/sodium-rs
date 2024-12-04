@@ -71,7 +71,8 @@
 
 [-] Rewrite Context
 
-[ ] Create Masks for Processing Tiles on Planes and Axes
+[-] Create Masks for Processing Tiles on Planes and Axes tile.rs
+    - write tests for these
 
 [ ] Graph::new
 

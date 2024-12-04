@@ -14,7 +14,7 @@ use crate::panic::PanicHandlerFn;
 use crate::results::SectionBitArray;
 
 #[repr(C)]
-struct FFISlice<T> {
+pub struct FFISlice<T> {
     count: u32,
     data_ptr: JPtr<T>,
 }
@@ -33,25 +33,25 @@ impl<T> From<&[T]> for FFISlice<T> {
 }
 
 #[repr(C)]
-struct FFIFrustum {
+pub struct FFIFrustum {
     planes: [[f32; 6]; 4],
     pos_int: [i32; 3],
     pos_frac: [f32; 3],
 }
 
 #[repr(C)]
-struct FFISectionOpaqueBlocks([u8; 512]);
+pub struct FFISectionOpaqueBlocks([u8; 512]);
 
 #[repr(C)]
-struct FFISectionBitArray {
-    size: u32,
+pub struct FFISectionBitArray {
+    section_count: u32,
     data: JPtr<u64>,
 }
 
-impl From<SectionBitArray> for FFISectionBitArray {
-    fn from(value: SectionBitArray) -> Self {
+impl From<&SectionBitArray> for FFISectionBitArray {
+    fn from(value: &SectionBitArray) -> Self {
         Self {
-            size: value.size,
+            section_count: value.section_count,
             data: value.data.as_ptr().into(),
         }
     }
@@ -147,16 +147,17 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSe
     ];
 
     let coord_context = GraphSearchContext::new(
+        &graph.coord_space,
         simd_frustum_planes,
-        simd_camera_world_pos,
+        simd_camera_pos_int,
+        simd_camera_pos_frac,
         fog_distance,
-        world_bottom_section_y,
-        world_top_section_y,
+        use_occlusion_culling,
     );
 
     graph.cull(&coord_context);
 
-    *return_value.into_mut_ref() = graph.results.into();
+    *return_value.into_mut_ref() = (&graph.results).into();
 }
 
 #[no_mangle]

@@ -3,13 +3,13 @@
 // that may come in handy in the future
 #![allow(dead_code)]
 
-mod results;
 mod bitset;
 mod ffi;
 mod graph;
 mod jni;
 mod math;
 mod mem;
+mod results;
 #[macro_use]
 mod panic;
 mod tests;

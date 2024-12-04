@@ -2,15 +2,15 @@ use std::{hint::assert_unchecked, mem::MaybeUninit};
 
 use core_simd::simd::prelude::*;
 
-use super::{direction, i32x3, u16x3, u16x3a, u8x3, Coords3};
+use super::{direction, i32x3, u16x3, u8x3, Coords3};
 
 pub struct GraphCoordSpace {
     morton_swizzle_pattern: u8x32,
     morton_bitmasks: u8x32,
 
-    section_bitmask: u16x3a,
-    block_bitmask: u16x3a,
-    level_0_tile_bitmask: u16x3a,
+    section_bitmask: u16x3,
+    block_bitmask: u16x3,
+    level_0_tile_bitmask: u16x3,
 
     pub world_bottom_section_y: i8,
     pub world_top_section_y: i8,
@@ -35,13 +35,10 @@ impl GraphCoordSpace {
             // the amount of bits are specified in terms of graph level 0.
             // we need to shift them to the right by 1 extra, because we're dealing with sections,
             // which are represented as graph level 1.
-            section_bitmask: u16x3a(
-                (u16x3::splat(0b1) << (bit_counts - u16x3::splat(1))) - u16x3::splat(1),
-            ),
-            block_bitmask: u16x3a(
-                (u16x3::splat(0b1) << (bit_counts + u16x3::splat(3))) - u16x3::splat(1),
-            ),
-            level_0_tile_bitmask: u16x3a((u16x3::splat(0b1) << bit_counts) - u16x3::splat(1)),
+            section_bitmask: (u16x3::splat(0b1) << (bit_counts - u16x3::splat(1)))
+                - u16x3::splat(1),
+            block_bitmask: (u16x3::splat(0b1) << (bit_counts + u16x3::splat(3))) - u16x3::splat(1),
+            level_0_tile_bitmask: (u16x3::splat(0b1) << bit_counts) - u16x3::splat(1),
             world_bottom_section_y,
             world_top_section_y,
         };
@@ -152,18 +149,18 @@ impl GraphCoordSpace {
     pub fn section_to_local_coords(&self, section_coords: i32x3) -> LocalTileCoords {
         let shifted_coords =
             section_coords - i32x3::from_xyz(0, self.world_bottom_section_y as i32, 0);
-        LocalTileCoords(shifted_coords.cast::<u16>() & self.section_bitmask.0)
+        LocalTileCoords(shifted_coords.cast::<u16>() & self.section_bitmask)
     }
 
     pub fn block_to_local_coords(&self, block_coords: i32x3) -> u16x3 {
         let world_bottom_block_y = (self.world_bottom_section_y as i32) << 4;
         let shifted_coords = block_coords - i32x3::from_xyz(0, world_bottom_block_y, 0);
-        shifted_coords.cast::<u16>() & self.block_bitmask.0
+        shifted_coords.cast::<u16>() & self.block_bitmask
     }
 
     fn coords_bitmask(&self, level: u8) -> u16x3 {
         unsafe { assert_unchecked(level < 5) }
-        self.level_0_tile_bitmask.0 >> Simd::splat(level as u16)
+        self.level_0_tile_bitmask >> Simd::splat(level as u16)
     }
 
     pub fn step_wrapping(

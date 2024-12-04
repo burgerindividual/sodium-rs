@@ -1,12 +1,13 @@
+use std::array;
 use std::mem::transmute;
 use std::ptr::addr_of_mut;
 
-use core_simd::simd::prelude::*;
+use core_simd::simd::{prelude::*, ToBytes};
 
 use crate::bitset;
 
 use super::coords::{LocalTileCoords, LocalTileIndex};
-use super::{direction, u16x3};
+use super::{direction, u16x3, Coords3};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NodeStorage(pub u8x64);
@@ -390,6 +391,50 @@ impl NodeStorage {
             ]
         )
     }
+
+    // a mask is necessary for each direction (6 directions) on each level (5 levels)
+    pub fn create_direction_masks(local_camera_pos_int: u16x3) -> [[u8x64; 6]; 5] {
+        array::from_fn(|level| {
+            // a tile has bounds of 8x8x8, so we restrict each axis to 0-7
+            let pos_in_tile = (local_camera_pos_int >> Simd::splat(level as u16)).cast::<u8>()
+                & Simd::splat(0b111);
+
+            let neg_x_lane = (1 << pos_in_tile.x()) - 1;
+            let neg_x_mask = Simd::splat(neg_x_lane);
+
+            let pos_x_lane = 0b11111110 << pos_in_tile.x();
+            let pos_x_mask = Simd::splat(pos_x_lane);
+
+            // native endianness should be correct here, but it's worth double checking
+            let neg_y_bitmask = (1 << pos_in_tile.y()) - 1;
+            let neg_y_lane = u64::from_ne_bytes(
+                mask8x8::from_bitmask(neg_y_bitmask)
+                    .to_int()
+                    .to_ne_bytes()
+                    .to_array(),
+            );
+            let neg_y_mask = u64x8::splat(neg_y_lane).to_ne_bytes();
+
+            let pos_y_bitmask = 0b11111110 << pos_in_tile.y();
+            let pos_y_lane = u64::from_ne_bytes(
+                mask8x8::from_bitmask(pos_y_bitmask)
+                    .to_int()
+                    .to_ne_bytes()
+                    .to_array(),
+            );
+            let pos_y_mask = u64x8::splat(pos_y_lane).to_ne_bytes();
+
+            let neg_z_bitmask = (1 << pos_in_tile.z()) - 1;
+            let neg_z_mask = mask64x8::from_bitmask(neg_z_bitmask).to_int().to_ne_bytes();
+
+            let pos_z_bitmask = 0b11111110 << pos_in_tile.z();
+            let pos_z_mask = mask64x8::from_bitmask(pos_z_bitmask).to_int().to_ne_bytes();
+
+            [
+                neg_x_mask, neg_y_mask, neg_z_mask, pos_x_mask, pos_y_mask, pos_z_mask,
+            ]
+        })
+    }
 }
 
 // level 0 is the highest resolution level, and each level up has half
@@ -438,6 +483,7 @@ impl Tile {
         combined_edge_data: u8x64,
         direction_masks: &[u8x64; 6],
     ) -> bool {
+        // TODO: review all fast paths
         // FAST PATH: if we start with all 0s, we'll end with all 0s
         // if combined_edge_data == Simd::splat(0) {
         //     // TODO: is it necessary to set this?
@@ -484,7 +530,7 @@ impl Tile {
 
         let mut traversed_nodes = combined_edge_data & opaque_nodes;
 
-        // maximum of 24 steps to complete the bfs (is this really faster than a normal loop?)
+        // maximum of 24 steps to complete the bfs (TODO: is this really faster than a normal loop?)
         for _ in 0..24 {
             let previous_traversed_nodes = traversed_nodes;
 
