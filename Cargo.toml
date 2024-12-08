@@ -35,8 +35,6 @@ strip = "debuginfo"
 # Using these dependencies directly gives us access to setting features.
 core_simd = { git = "https://github.com/burgerindividual/portable-simd.git" }
 std_float = { git = "https://github.com/burgerindividual/portable-simd.git" }
-crash-handler = "0.6.2"
-
 
 [dev-dependencies]
 rand = "0.8.5"
