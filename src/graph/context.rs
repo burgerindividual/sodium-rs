@@ -10,14 +10,16 @@ pub struct GraphSearchContext {
 
     // the camera coords (in blocks) relative to the local origin, which is the (0, 0, 0) point of
     // the graph.
-    camera_pos_int: u16x3,
-    camera_pos_frac: f32x3,
+    pub camera_pos_int: u16x3,
+    pub camera_pos_frac: f32x3,
 
     pub iter_start_tile: LocalTileCoords,
     pub direction_iter_counts: u8x6,
 
     // TODO: actually use this
     pub use_occlusion_culling: bool,
+
+    pub direction_masks: [[u8x64; 6]; 5],
 }
 
 impl GraphSearchContext {
@@ -26,7 +28,7 @@ impl GraphSearchContext {
         frustum_planes: [f32x6; 4],
         global_camera_pos_int: i32x3,
         camera_pos_frac: f32x3,
-        fog_distance: f32,
+        search_distance: f32,
         use_occlusion_culling: bool,
     ) -> Self {
         // TODO: check against graph size
@@ -34,22 +36,44 @@ impl GraphSearchContext {
         let frustum = LocalFrustum::new(frustum_planes);
 
         let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
+        let iter_start_pos = camera_pos_int >> Simd::splat(7);
 
-        // direction_iter_counts: step render_dist amount on level 1, convert to level
-        // 3, subtract with start tile. this can prolly be slow.
+        let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
+        let level_4_tile_bitmask = coord_space.coords_bitmask(4);
+        let positive_iter_counts = (((camera_pos + Simd::splat(search_distance)).cast::<u16>()
+            >> Simd::splat(7))
+            & level_4_tile_bitmask)
+            - iter_start_pos;
+        // we cast from f32 to i16 to u16 here. this is to allow underflowing, as we
+        // want an underflow to
+        let negative_iter_counts = iter_start_pos
+            - (((camera_pos - Simd::splat(search_distance))
+                .cast::<i16>()
+                .cast::<u16>()
+                >> Simd::splat(7))
+                & level_4_tile_bitmask);
+
+        let direction_iter_counts = simd_swizzle!(
+            negative_iter_counts.cast::<u8>(),
+            positive_iter_counts.cast::<u8>(),
+            [0, 1, 2, 3, 4, 5,],
+        );
 
         Self {
             frustum,
-            fog_distance,
+            fog_distance: search_distance,
             camera_pos_int,
             camera_pos_frac,
-            iter_start_tile: todo!(),
-            direction_iter_counts: todo!(),
+            iter_start_tile: LocalTileCoords(iter_start_pos),
+            direction_iter_counts,
             use_occlusion_culling,
+            direction_masks: NodeStorage::create_direction_masks(camera_pos_int),
         }
     }
 
-    pub fn test_node(
+    #[no_mangle]
+    #[inline(never)]
+    pub fn test_tile(
         &self,
         coord_space: &GraphCoordSpace,
         coords: LocalTileCoords,
@@ -111,7 +135,7 @@ impl GraphSearchContext {
 
     // based on this algo
     // https://github.com/CaffeineMC/sodium-fabric/blob/dd25399c139004e863beb8a2195b9d80b847d95c/common/src/main/java/net/caffeinemc/mods/sodium/client/render/chunk/occlusion/OcclusionCuller.java#L153
-    fn bounds_inside_fog(
+    pub fn bounds_inside_fog(
         &self,
         relative_bounds: RelativeBoundingBox,
         results: &mut CombinedTestResults,
@@ -191,65 +215,64 @@ impl LocalFrustum {
     pub fn test_box(&self, bb: RelativeBoundingBox, results: &mut CombinedTestResults) {
         const SIGN_BIT_MASK: u32x6 = Simd::splat(1 << 31);
 
-        unsafe {
-            // These unsafe mask shenanigans just check if the sign bit is set for each
-            // lane. This is faster than doing a manual comparison with
-            // something like simd_gt.
-            let is_neg_x =
-                Mask::from_int_unchecked(self.plane_xs.to_bits().cast::<i32>() >> Simd::splat(31));
-            let is_neg_y =
-                Mask::from_int_unchecked(self.plane_ys.to_bits().cast::<i32>() >> Simd::splat(31));
-            let is_neg_z =
-                Mask::from_int_unchecked(self.plane_zs.to_bits().cast::<i32>() >> Simd::splat(31));
+        // These mask shenanigans just check if the sign bit is set for each lane.
+        // This is faster than doing a float comparison because we can ignore special
+        // float values like infinity, and because we can hint to the compiler to use
+        // vblendvps on x86.
+        let is_neg_x = self.plane_xs.to_bits().simd_ge(Simd::splat(0x80000000));
+        let is_neg_y = self.plane_ys.to_bits().simd_ge(Simd::splat(0x80000000));
+        let is_neg_z = self.plane_zs.to_bits().simd_ge(Simd::splat(0x80000000));
 
-            let bb_min_x = Simd::splat(bb.min.x());
-            let bb_max_x = Simd::splat(bb.max.x());
-            let outside_bounds_x = is_neg_x.select(bb_min_x, bb_max_x);
+        let bb_min_x = Simd::splat(bb.min.x());
+        let bb_max_x = Simd::splat(bb.max.x());
+        let outside_bounds_x = is_neg_x.select(bb_min_x, bb_max_x);
 
-            let bb_min_y = Simd::splat(bb.min.y());
-            let bb_max_y = Simd::splat(bb.max.y());
-            let outside_bounds_y = is_neg_y.select(bb_min_y, bb_max_y);
+        let bb_min_y = Simd::splat(bb.min.y());
+        let bb_max_y = Simd::splat(bb.max.y());
+        let outside_bounds_y = is_neg_y.select(bb_min_y, bb_max_y);
 
-            let bb_min_z = Simd::splat(bb.min.z());
-            let bb_max_z = Simd::splat(bb.max.z());
-            let outside_bounds_z = is_neg_z.select(bb_min_z, bb_max_z);
+        let bb_min_z = Simd::splat(bb.min.z());
+        let bb_max_z = Simd::splat(bb.max.z());
+        let outside_bounds_z = is_neg_z.select(bb_min_z, bb_max_z);
 
-            let outside_length_sq = self.plane_xs.mul_add_fast(
-                outside_bounds_x,
-                self.plane_ys
-                    .mul_add_fast(outside_bounds_y, self.plane_zs * outside_bounds_z),
-            );
+        let outside_length_sq = self.plane_xs.mul_add_fast(
+            outside_bounds_x,
+            self.plane_ys
+                .mul_add_fast(outside_bounds_y, self.plane_zs * outside_bounds_z),
+        );
 
-            // TODO: double check the stuff here
-            // if any outside lengths are greater than -w, return OUTSIDE
-            // if all inside lengths are greater than -w, return INSIDE
-            // otherwise, return PARTIAL
-            // NOTE: it is impossible for a lane to be both inside and outside at the same
-            // time
-            let any_outside =
-                (outside_length_sq + self.plane_ws).to_bits() & SIGN_BIT_MASK != Simd::splat(0);
+        // TODO: double check the stuff here
+        // if any outside lengths are greater than -w, return OUTSIDE
+        // if all inside lengths are greater than -w, return INSIDE
+        // otherwise, return PARTIAL
+        // NOTE: it is impossible for a lane to be both inside and outside at the same
+        // time
 
-            if any_outside {
-                // early exit
-                *results = CombinedTestResults::OUTSIDE;
-                return;
-            }
+        // the resize is necessary here because it allows LLVM to generate a vptest on
+        // x86
+        let any_outside = ((outside_length_sq + self.plane_ws).to_bits() & SIGN_BIT_MASK).resize(0)
+            != u32x8::splat(0);
 
-            let inside_bounds_x = is_neg_x.select(bb_max_x, bb_min_x);
-            let inside_bounds_y = is_neg_y.select(bb_max_y, bb_min_y);
-            let inside_bounds_z = is_neg_z.select(bb_max_z, bb_min_z);
-
-            let inside_length_sq = self.plane_xs.mul_add_fast(
-                inside_bounds_x,
-                self.plane_ys
-                    .mul_add_fast(inside_bounds_y, self.plane_zs * inside_bounds_z),
-            );
-
-            let any_partial =
-                (inside_length_sq + self.plane_ws).to_bits() & SIGN_BIT_MASK != Simd::splat(0);
-
-            results.set_partial::<{ CombinedTestResults::FRUSTUM_BIT }>(any_partial);
+        if any_outside {
+            // early exit
+            *results = CombinedTestResults::OUTSIDE;
+            return;
         }
+
+        let inside_bounds_x = is_neg_x.select(bb_max_x, bb_min_x);
+        let inside_bounds_y = is_neg_y.select(bb_max_y, bb_min_y);
+        let inside_bounds_z = is_neg_z.select(bb_max_z, bb_min_z);
+
+        let inside_length_sq = self.plane_xs.mul_add_fast(
+            inside_bounds_x,
+            self.plane_ys
+                .mul_add_fast(inside_bounds_y, self.plane_zs * inside_bounds_z),
+        );
+
+        let any_partial = ((inside_length_sq + self.plane_ws).to_bits() & SIGN_BIT_MASK).resize(0)
+            != u32x8::splat(0);
+
+        results.set_partial::<{ CombinedTestResults::FRUSTUM_BIT }>(any_partial);
     }
 }
 

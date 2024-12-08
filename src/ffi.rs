@@ -63,7 +63,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_setAllo
     _: *mut JClass,
     vtable: JPtr<LibcAllocVtable>,
 ) -> bool {
-    if let Some(vtable) = vtable.as_ptr().as_ref() {
+    if let Some(&vtable) = vtable.as_ptr().as_ref() {
         crate::mem::set_allocator(vtable)
     } else {
         true
@@ -131,7 +131,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSe
     return_value: JPtrMut<FFISectionBitArray>,
     graph: JPtrMut<Graph>,
     frustum: JPtr<FFIFrustum>,
-    fog_distance: Jfloat,
+    search_distance: Jfloat,
     use_occlusion_culling: Jboolean,
 ) {
     let graph = graph.into_mut_ref();
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSe
         simd_frustum_planes,
         simd_camera_pos_int,
         simd_camera_pos_frac,
-        fog_distance,
+        search_distance,
         use_occlusion_culling,
     );
 

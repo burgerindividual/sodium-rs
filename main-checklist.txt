@@ -50,6 +50,8 @@
 
 [x] Fast coordinate stepping sodium-rs/src/graph/coords.rs https://godbolt.org/z/PcrTWdcc6
 
+[x] Rewrite Context
+
 [-] Top Level Iteration: sodium-zig-frustum-raster/src/tile_iteration.zig
     - need to move to rust
 
@@ -68,8 +70,6 @@
     - if not level 0 and tile.children_to_traverse != 0b00000000, iterate and traverse children recursively
     - on the way back up, downscale child traversal data and insert into parent traversal data
     - alternatively, save this step for later by calculating the downscale results lazily
-
-[-] Rewrite Context
 
 [-] Create Masks for Processing Tiles on Planes and Axes tile.rs
     - write tests for these
@@ -99,3 +99,5 @@ LATER:
 [ ] Smarter version of Graph.remove_section
 
 [ ] Make "use occlusion culling" actually work for disabling in spectator mode
+
+[ ] Extensive documentation of the base bfs algorithm, the graph and tile representations, and individual methods

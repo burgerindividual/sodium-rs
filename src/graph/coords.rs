@@ -3,7 +3,7 @@ use std::mem::MaybeUninit;
 
 use core_simd::simd::prelude::*;
 
-use super::{direction, i32x3, u16x3, u8x3, Coords3};
+use super::{direction, i32x3, u16x3, u8x3, Coords3, Graph};
 
 pub struct GraphCoordSpace {
     morton_swizzle_pattern: u8x32,
@@ -161,8 +161,8 @@ impl GraphCoordSpace {
         shifted_coords.cast::<u16>() & self.block_bitmask
     }
 
-    fn coords_bitmask(&self, level: u8) -> u16x3 {
-        unsafe { assert_unchecked(level < 5) }
+    pub fn coords_bitmask(&self, level: u8) -> u16x3 {
+        unsafe { assert_unchecked(level <= Graph::HIGHEST_LEVEL) }
         self.level_0_tile_bitmask >> Simd::splat(level as u16)
     }
 

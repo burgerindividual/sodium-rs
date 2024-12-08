@@ -26,7 +26,7 @@ pub type f32x3 = Simd<f32, 3>;
 pub type f64x3 = Simd<f64, 3>;
 
 // additional useful shorthands
-pub type u8x6 = Simd<u32, 6>;
+pub type u8x6 = Simd<u8, 6>;
 pub type f32x6 = Simd<f32, 6>;
 pub type u32x6 = Simd<u32, 6>;
 

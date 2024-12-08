@@ -6,21 +6,21 @@ use core::ptr;
 static mut GLOBAL_ALLOC: GlobalLibcAllocator = GlobalLibcAllocator::uninit();
 
 #[cfg(not(test))]
-pub fn set_allocator(vtable: &LibcAllocVtable) -> bool {
+pub fn set_allocator(vtable: LibcAllocVtable) -> bool {
+    let mut error = vtable.aligned_alloc as usize == 0;
+    error |= vtable.aligned_free as usize == 0;
+    error |= vtable.realloc as usize == 0;
+    error |= vtable.calloc as usize == 0;
+
     unsafe {
-        GLOBAL_ALLOC = GlobalLibcAllocator::new(*vtable);
-
-        let mut error = GLOBAL_ALLOC.vtable().aligned_alloc as usize == 0;
-        error |= GLOBAL_ALLOC.vtable().aligned_free as usize == 0;
-        error |= GLOBAL_ALLOC.vtable().realloc as usize == 0;
-        error |= GLOBAL_ALLOC.vtable().calloc as usize == 0;
-
-        error
+        GLOBAL_ALLOC.put_vtable(vtable);
     }
+
+    error
 }
 
 #[cfg(test)]
-pub fn set_allocator(_: &LibcAllocVtable) -> bool {
+pub fn set_allocator(_: LibcAllocVtable) -> bool {
     // should not be called when testing
     unreachable!();
 }
@@ -43,10 +43,8 @@ impl GlobalLibcAllocator {
         GlobalLibcAllocator { vtable: None }
     }
 
-    pub fn new(allocator: LibcAllocVtable) -> GlobalLibcAllocator {
-        GlobalLibcAllocator {
-            vtable: Some(allocator),
-        }
+    pub fn put_vtable(&mut self, vtable: LibcAllocVtable) {
+        self.vtable = Some(vtable);
     }
 
     fn vtable(&self) -> &LibcAllocVtable {

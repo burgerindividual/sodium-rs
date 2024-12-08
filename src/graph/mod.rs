@@ -53,26 +53,118 @@ impl Graph {
 
     pub fn clear(&mut self) {
         self.results.clear();
-        // TODO: reset all traversal status
+        
+        for tile in &mut self.level_0 {
+            tile.traversal_status = TraversalStatus::Uninitialized;
+            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+        }
+
+        for tile in &mut self.level_1 {
+            tile.traversal_status = TraversalStatus::Uninitialized;
+            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+        }
+
+        for tile in &mut self.level_2 {
+            tile.traversal_status = TraversalStatus::Uninitialized;
+            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+        }
+
+        for tile in &mut self.level_3 {
+            tile.traversal_status = TraversalStatus::Uninitialized;
+            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+        }
+
+        for tile in &mut self.level_4 {
+            tile.traversal_status = TraversalStatus::Uninitialized;
+            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+        }
     }
 
     fn iterate_tiles(&mut self, context: &GraphSearchContext) {}
 
-    fn process_tile<const DIRECTION_SET: u8>(
+    #[no_mangle]
+    #[inline(never)]
+    pub fn exported(
         &mut self,
         context: &GraphSearchContext,
+        index: LocalTileIndex,
         coords: LocalTileCoords,
         level: u8,
         parent_test_results: CombinedTestResults,
     ) {
-        // Test frustum and fog first, before touching any edge data
-        // if the test fails, it should be considerd "Traversed" with the traversed
-        // nodes all set to 0 TODO OPT: if all input edges are blank,
-        // immediately mark the tile skipped and move on
+        self.process_tile::<0b111000>(context, index, coords, level, parent_test_results);
+    }
 
-        if level >= Self::EARLY_CHECKS_LOWEST_LEVEL {
-            let test_result =
-                context.test_node(&self.coord_space, coords, level, parent_test_results);
+    fn process_tile<const DIRECTION_SET: u8>(
+        &mut self,
+        context: &GraphSearchContext,
+        index: LocalTileIndex,
+        coords: LocalTileCoords,
+        level: u8,
+        parent_test_results: CombinedTestResults,
+    ) {
+        // tile needs to be re-borrowed 3 times in this method, due to borrow checker
+        // rules. these should be optimized out.
+        let tile = self.get_tile_mut(index, level);
+
+        tile.traversal_status = TraversalStatus::Processed {
+            children_upmipped: 0,
+        };
+
+        // try to quickly determine whether we need to actually traverse the tile using
+        // the frustum, fog, etc
+        let test_result = if level >= Self::EARLY_CHECKS_LOWEST_LEVEL {
+            context.test_tile(&self.coord_space, coords, level, parent_test_results)
+        } else {
+            CombinedTestResults::ALL_INSIDE
+        };
+
+        let tile = self.get_tile_mut(index, level);
+
+        if test_result == CombinedTestResults::OUTSIDE {
+            // early exit
+            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+            return;
+        }
+
+        // if all children are present, we don't have to process this tile, and we can
+        // solely process the children.
+        if tile.children_to_traverse == 0b11111111 {
+            // early exit
+            // we don't have to set the traversed nodes here, because they'll be overwritten
+            // by upmipping when needed
+            return;
+        }
+
+        let combined_edge_data = self.combine_incoming_edges::<DIRECTION_SET>(coords, level);
+
+        let tile = self.get_tile_mut(index, level);
+
+        // FAST PATH: if we start with all 0s on the edges, we'll end with all 0s
+        if combined_edge_data == Simd::splat(0) {
+            // early exit
+            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+            return;
+        }
+
+        let direction_masks = &context.direction_masks[level as usize];
+        tile.traverse::<DIRECTION_SET>(combined_edge_data, direction_masks);
+
+        if level > 0 && tile.children_to_traverse != 0b00000000 {
+            let child_iter = tile.sorted_child_iter(index, coords, context.camera_pos_int, level);
+            let child_level = level - 1;
+
+            for (child_index, child_coords) in child_iter {
+                self.process_tile::<DIRECTION_SET>(
+                    context,
+                    child_index,
+                    child_coords,
+                    child_level,
+                    parent_test_results,
+                );
+            }
+        } else {
+            // end of the downward traversal
         }
     }
 
@@ -118,10 +210,7 @@ impl Graph {
         let neighbor_traversed_nodes = match neighbor_traversal_status {
             TraversalStatus::Uninitialized => self.get_traversed_nodes_up(neighbor_index, level),
             TraversalStatus::Downmipped => neighbor_tile.traversed_nodes,
-            TraversalStatus::Traversed {
-                children_upmipped: _,
-            }
-            | TraversalStatus::Upmipped {
+            TraversalStatus::Processed {
                 children_upmipped: _,
             } => self.get_traversed_nodes_down::<DIRECTION>(neighbor_index, level),
         }
@@ -138,8 +227,6 @@ impl Graph {
         }
     }
 
-    // the upward search here assumes that there is an upper level which has been
-    // traversed.
     fn get_traversed_nodes_down<const DIRECTION: u8>(
         &mut self,
         index: LocalTileIndex,
@@ -158,14 +245,12 @@ impl Graph {
         };
 
         let children_on_edge = tile.children_to_traverse & edge_mask;
-        let children_upmipped = if let TraversalStatus::Traversed { children_upmipped }
-        | TraversalStatus::Upmipped { children_upmipped } =
-            tile.traversal_status
-        {
-            children_upmipped
-        } else {
-            unsafe { unreachable_unchecked() }
-        };
+        let children_upmipped =
+            if let TraversalStatus::Processed { children_upmipped } = tile.traversal_status {
+                children_upmipped
+            } else {
+                unsafe { unreachable_unchecked() }
+            };
         let children_to_recurse = children_on_edge & !children_upmipped;
 
         if children_to_recurse == 0 {
@@ -183,14 +268,12 @@ impl Graph {
 
         let tile = self.get_tile_mut(index, level);
 
-        let children_upmipped = if let TraversalStatus::Traversed { children_upmipped }
-        | TraversalStatus::Upmipped { children_upmipped } =
-            &mut tile.traversal_status
-        {
-            children_upmipped
-        } else {
-            unsafe { unreachable_unchecked() }
-        };
+        let children_upmipped =
+            if let TraversalStatus::Processed { children_upmipped } = &mut tile.traversal_status {
+                children_upmipped
+            } else {
+                unsafe { unreachable_unchecked() }
+            };
         *children_upmipped |= children_to_recurse;
         tile.traversed_nodes = traversed_nodes_updated;
 
@@ -204,17 +287,6 @@ impl Graph {
         let parent_level = level + 1;
         let parent_tile = self.get_tile(parent_index, parent_level);
         let parent_traversal_status = parent_tile.traversal_status;
-
-        debug_assert!(
-            !matches!(
-                parent_traversal_status,
-                TraversalStatus::Upmipped {
-                    children_upmipped: _
-                }
-            ),
-            "Upward traversal should not encounter tile of type \"Upmipped\". Tile Found: {:?}",
-            parent_tile,
-        );
 
         let parent_traversed_nodes = if parent_traversal_status == TraversalStatus::Uninitialized {
             self.get_traversed_nodes_up(parent_index, parent_level)

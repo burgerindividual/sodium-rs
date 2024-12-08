@@ -323,12 +323,47 @@ impl NodeStorage {
 
     #[rustfmt::skip]
     pub fn shift_neg_y(data: u8x64) -> u8x64 {
+        // The u8x64 "data" vector represents an 8x8x8 array of bits, with each bit
+        // representing a node. It is indexed with the pattern ZZZYYYXXX. Because
+        // of our indexing scheme, we know that each u8 lane in the vector represents
+        // a row of data on the X axis.
+        // 
+        // The array of indices provided to this swizzle can be read with
+        // the following diagram:
+        // 
+        //     y=0       Y Axis      y=7
+        //  z=0|------------------------
+        //     |
+        //     |
+        //  Z  |
+        // Axis|
+        //     |
+        //     |
+        // z=7 |
+        // 
+        // Keep in mind, a swizzle with an array of indices full of only incrementing
+        // indices starting at 0 would result in a completely unmodified vector. That
+        // array would look like the following:
+        //
+        // 0,  1,  2,  3,  4,  5,  6,  7, 
+        // 8,  9,  10, 11, 12, 13, 14, 15,
+        // 16, 17, 18, 19, 20, 21, 22, 23,
+        // 24, 25, 26, 27, 28, 29, 30, 31,
+        // 32, 33, 34, 35, 36, 37, 38, 39,
+        // 40, 41, 42, 43, 44, 45, 46, 47,
+        // 48, 49, 50, 51, 52, 53, 54, 55,
+        // 56, 57, 58, 59, 60, 61, 62, 63,
+        // 
+        // By shifting each index in that array to the left by 1, this swizzle operation
+        // effectively shifts each X-axis row of data by -1 on the Y axis. The "64" indices
+        // seen in this swizzle are used to fill the empty space that the shift left over
+        // with zeroes.
         simd_swizzle!(
             data,
             Simd::splat(0),
             [
-                1, 2, 3, 4, 5, 6, 7, 64,
-                9, 10, 11, 12, 13, 14, 15, 64,
+                1,  2,  3,  4,  5,  6,  7,  64,
+                9,  10, 11, 12, 13, 14, 15, 64,
                 17, 18, 19, 20, 21, 22, 23, 64,
                 25, 26, 27, 28, 29, 30, 31, 64,
                 33, 34, 35, 36, 37, 38, 39, 64,
@@ -345,8 +380,8 @@ impl NodeStorage {
             data,
             Simd::splat(0),
             [
-                64, 0, 1, 2, 3, 4, 5, 6,
-                64, 8, 9, 10, 11, 12, 13, 14,
+                64, 0,  1,  2,  3,  4,  5,  6,
+                64, 8,  9,  10, 11, 12, 13, 14,
                 64, 16, 17, 18, 19, 20, 21, 22,
                 64, 24, 25, 26, 27, 28, 29, 30,
                 64, 32, 33, 34, 35, 36, 37, 38,
@@ -363,7 +398,7 @@ impl NodeStorage {
             data,
             Simd::splat(0),
             [
-                8, 9, 10, 11, 12, 13, 14, 15,
+                8,  9,  10, 11, 12, 13, 14, 15,
                 16, 17, 18, 19, 20, 21, 22, 23,
                 24, 25, 26, 27, 28, 29, 30, 31,
                 32, 33, 34, 35, 36, 37, 38, 39,
@@ -382,8 +417,8 @@ impl NodeStorage {
             Simd::splat(0),
             [
                 64, 65, 66, 67, 68, 69, 70, 71,
-                0, 1, 2, 3, 4, 5, 6, 7,
-                8, 9, 10, 11, 12, 13, 14, 15,
+                0,  1,  2,  3,  4,  5,  6,  7,
+                8,  9,  10, 11, 12, 13, 14, 15,
                 16, 17, 18, 19, 20, 21, 22, 23,
                 24, 25, 26, 27, 28, 29, 30, 31,
                 32, 33, 34, 35, 36, 37, 38, 39,
@@ -455,9 +490,7 @@ pub struct Tile {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TraversalStatus {
     Uninitialized,
-    Traversed { children_upmipped: u8 },
-    // is this one really necessary? it could probably be merged with Traversed and renamed
-    Upmipped { children_upmipped: u8 },
+    Processed { children_upmipped: u8 },
 
     // for this to be worth using, the skipped status needs to be propagated down immediately (i
     // think?). when a tile is marked as skipped, the contents of the first byte will either
@@ -480,25 +513,14 @@ impl Default for Tile {
 }
 
 impl Tile {
+    // TODO: make sure this is sound with up and downscaling
+    // TODO: review all fast paths
     pub fn traverse<const DIRECTION_SET: u8>(
         &mut self,
         combined_edge_data: u8x64,
         direction_masks: &[u8x64; 6],
-    ) -> bool {
-        // TODO: review all fast paths
-        // FAST PATH: if we start with all 0s, we'll end with all 0s
-        // if combined_edge_data == Simd::splat(0) {
-        //     // TODO: is it necessary to set this?
-        //     self.traversed_nodes = NodeStorage(Simd::splat(0));
-
-        //     self.traversal_status = TraversalStatus::Skipped {
-        //         children_downmipped: 0,
-        //     };
-
-        //     return false;
-        // }
-
-        self.traversal_status = TraversalStatus::Traversed {
+    ) {
+        self.traversal_status = TraversalStatus::Processed {
             children_upmipped: 0,
         };
 
@@ -563,11 +585,6 @@ impl Tile {
         }
 
         self.traversed_nodes = NodeStorage(traversed_nodes);
-
-        // if there is any edge data, the tile is visible
-        // (this whole method could probably be skipped for tiles that won't be relied
-        // upon) TODO: make sure this is sound with up and downscaling
-        return true;
     }
 
     pub fn sorted_child_iter(
