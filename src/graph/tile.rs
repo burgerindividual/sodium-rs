@@ -664,6 +664,7 @@ impl SortedChildIterator {
 }
 
 impl Iterator for SortedChildIterator {
+    // TODO: consider changing this to only iterate on coords?
     type Item = (LocalTileIndex, LocalTileCoords);
 
     fn next(&mut self) -> Option<Self::Item> {

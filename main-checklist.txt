@@ -52,8 +52,7 @@
 
 [x] Rewrite Context
 
-[-] Top Level Iteration: sodium-zig-frustum-raster/src/tile_iteration.zig
-    - need to move to rust
+[x] Top Level Iteration: graph/mod.rs
 
 [-] Building Section List and Sending to Java
     - ideas to set full tile in bit array?

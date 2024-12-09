@@ -76,16 +76,20 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_setPani
     _: *mut JClass,
     panic_handler_fn_ptr: JFnPtr<PanicHandlerFn>,
 ) -> bool {
-    if let Some(panic_handler_fn_ptr) = panic_handler_fn_ptr.as_fn_ptr() {
-        crate::panic::set_panic_handler(panic_handler_fn_ptr);
-        false
+    if cfg!(feature = "panic_handler") {
+        if let Some(panic_handler_fn_ptr) = panic_handler_fn_ptr.as_fn_ptr() {
+            crate::panic::set_panic_handler(panic_handler_fn_ptr);
+            false
+        } else {
+            true
+        }
     } else {
         true
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphCreate(
+pub extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphCreate(
     _: *mut JEnv,
     _: *mut JClass,
     world_bottom_section_y: Jbyte,
@@ -146,7 +150,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSe
         Simd::from_array(frustum.planes[3]),
     ];
 
-    let coord_context = GraphSearchContext::new(
+    let context = GraphSearchContext::new(
         &graph.coord_space,
         simd_frustum_planes,
         simd_camera_pos_int,
@@ -155,7 +159,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSe
         use_occlusion_culling,
     );
 
-    graph.cull(&coord_context);
+    graph.cull(&context);
 
     *return_value.into_mut_ref() = (&graph.results).into();
 }

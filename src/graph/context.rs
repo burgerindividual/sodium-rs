@@ -71,8 +71,6 @@ impl GraphSearchContext {
         }
     }
 
-    #[no_mangle]
-    #[inline(never)]
     pub fn test_tile(
         &self,
         coord_space: &GraphCoordSpace,

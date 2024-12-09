@@ -1,4 +1,5 @@
-use crate::{graph::coords::LocalTileCoords, math::u16x3};
+use crate::graph::coords::LocalTileCoords;
+use crate::math::u16x3;
 
 // TODO OPT: organize into 8x4x8 section regions, represented as 256-bit masks
 pub struct SectionBitArray {
@@ -6,7 +7,7 @@ pub struct SectionBitArray {
     pub data: Box<[u64]>,
 
     graph_origin_offset: u16x3,
-    dimensions: u16x3, 
+    dimensions: u16x3,
 }
 
 impl SectionBitArray {
@@ -14,6 +15,5 @@ impl SectionBitArray {
         self.data.fill(0);
     }
 
-    pub fn set_tile(&mut self, coords: LocalTileCoords, level: u8) {
-    }
+    pub fn set_tile(&mut self, coords: LocalTileCoords, level: u8) {}
 }
