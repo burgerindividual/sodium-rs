@@ -20,19 +20,10 @@ pub const fn inverse_set(direction_set: u8) -> u8 {
     !direction_set & 0b111111
 }
 
-pub struct DirectionSetIter(pub u8);
-
-impl Iterator for DirectionSetIter {
-    type Item = u8;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.0 != 0 {
-            let prev_set = self.0;
-            self.0 &= self.0 - 1;
-            let direction = self.0 ^ prev_set;
-            Some(direction)
-        } else {
-            None
-        }
-    }
+/// Removes a direction from the direction set, and returns it
+pub const fn take_dir(direction_set: &mut u8) -> u8 {
+    let prev_set = *direction_set;
+    *direction_set &= *direction_set - 1;
+    let direction = *direction_set ^ prev_set;
+    direction
 }

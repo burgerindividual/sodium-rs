@@ -14,7 +14,7 @@ pub struct GraphSearchContext {
     pub camera_pos_frac: f32x3,
 
     pub iter_start_tile: LocalTileCoords,
-    pub direction_iter_counts: u8x6,
+    pub direction_step_counts: u8x6,
 
     // TODO: actually use this
     pub use_occlusion_culling: bool,
@@ -40,22 +40,22 @@ impl GraphSearchContext {
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
         let level_4_tile_bitmask = coord_space.coords_bitmask(4);
-        let positive_iter_counts = (((camera_pos + Simd::splat(search_distance)).cast::<u16>()
+        let positive_step_counts = (((camera_pos + Simd::splat(search_distance)).cast::<u16>()
             >> Simd::splat(7))
             & level_4_tile_bitmask)
             - iter_start_pos;
         // we cast from f32 to i16 to u16 here. this is to allow underflowing, as we
         // want an underflow to
-        let negative_iter_counts = iter_start_pos
+        let negative_step_counts = iter_start_pos
             - (((camera_pos - Simd::splat(search_distance))
                 .cast::<i16>()
                 .cast::<u16>()
                 >> Simd::splat(7))
                 & level_4_tile_bitmask);
 
-        let direction_iter_counts = simd_swizzle!(
-            negative_iter_counts.cast::<u8>(),
-            positive_iter_counts.cast::<u8>(),
+        let direction_step_counts = simd_swizzle!(
+            negative_step_counts.cast::<u8>(),
+            positive_step_counts.cast::<u8>(),
             [0, 1, 2, 3, 4, 5,],
         );
 
@@ -65,7 +65,7 @@ impl GraphSearchContext {
             camera_pos_int,
             camera_pos_frac,
             iter_start_tile: LocalTileCoords(iter_start_pos),
-            direction_iter_counts,
+            direction_step_counts,
             use_occlusion_culling,
             direction_masks: NodeStorage::create_direction_masks(camera_pos_int),
         }
