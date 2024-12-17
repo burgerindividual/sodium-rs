@@ -1,4 +1,5 @@
 use core_simd::simd::prelude::*;
+use std_float::StdFloat;
 
 use crate::graph::*;
 
@@ -9,7 +10,8 @@ pub struct GraphSearchContext {
     fog_distance: f32,
 
     // the camera coords (in blocks) relative to the local origin, which is the (0, 0, 0) point of
-    // the graph.
+    // the graph. the representation here is slightly different than the representation in
+    // CameraTransform.java, as camera_pos_frac can never be negativein our representation.
     pub camera_pos_int: u16x3,
     pub camera_pos_frac: f32x3,
 
@@ -26,32 +28,46 @@ impl GraphSearchContext {
     pub fn new(
         coord_space: &GraphCoordSpace,
         frustum_planes: [f32x6; 4],
-        global_camera_pos_int: i32x3,
-        camera_pos_frac: f32x3,
+        global_camera_pos: f64x3,
         search_distance: f32,
         use_occlusion_culling: bool,
     ) -> Self {
         // TODO: check against graph size
+        // TODO: assert search distance size isn't too big
+        // TODO: assert camera pos isn't ridiculous
 
         let frustum = LocalFrustum::new(frustum_planes);
+
+        let global_camera_pos_floor = global_camera_pos.floor();
+        let global_camera_pos_int = unsafe { global_camera_pos_floor.to_int_unchecked::<i32>() };
+
+        // see the comment in CameraTransform.java for why we reduce the precision
+        const PRECISION_MODIFIER: f32x3 = Simd::splat(128.0);
+        let camera_pos_frac = ((global_camera_pos - global_camera_pos_floor).cast::<f32>()
+            + PRECISION_MODIFIER)
+            - PRECISION_MODIFIER;
 
         let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
         let iter_start_pos = camera_pos_int >> Simd::splat(7);
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
         let level_4_tile_bitmask = coord_space.coords_bitmask(4);
-        let positive_step_counts = (((camera_pos + Simd::splat(search_distance)).cast::<u16>()
-            >> Simd::splat(7))
-            & level_4_tile_bitmask)
-            - iter_start_pos;
+        let positive_step_counts = unsafe {
+            (((camera_pos + Simd::splat(search_distance)).to_int_unchecked::<u16>()
+                >> Simd::splat(7))
+                & level_4_tile_bitmask)
+                - iter_start_pos
+        };
         // we cast from f32 to i16 to u16 here. this is to allow underflowing, as we
         // want an underflow to
-        let negative_step_counts = iter_start_pos
-            - (((camera_pos - Simd::splat(search_distance))
-                .cast::<i16>()
-                .cast::<u16>()
-                >> Simd::splat(7))
-                & level_4_tile_bitmask);
+        let negative_step_counts = unsafe {
+            iter_start_pos
+                - (((camera_pos - Simd::splat(search_distance))
+                    .to_int_unchecked::<i16>()
+                    .cast::<u16>()
+                    >> Simd::splat(7))
+                    & level_4_tile_bitmask)
+        };
 
         let direction_step_counts = simd_swizzle!(
             negative_step_counts.cast::<u8>(),
@@ -187,6 +203,7 @@ impl GraphSearchContext {
     }
 
     // TODO OPT: add douira's magic visible directions culler
+    // TODO OPT: add ray culling
 }
 
 /// When using this, it is expected that coordinates are relative to the camera

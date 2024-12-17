@@ -6,7 +6,7 @@
 mod bitset;
 mod ffi;
 mod graph;
-mod jni;
+mod java;
 mod math;
 mod mem;
 mod results;

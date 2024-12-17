@@ -2,7 +2,7 @@ use std::io::{Cursor, Write};
 use std::panic::{self, PanicHookInfo};
 use std::sync::OnceLock;
 
-use crate::jni::JPtr;
+use crate::java::JPtr;
 
 pub type PanicHandlerFn = extern "C" fn(data: JPtr<u8>, len: i32) -> !;
 

@@ -13,7 +13,7 @@ pub fn set_allocator(vtable: LibcAllocVtable) -> bool {
     error |= vtable.calloc as usize == 0;
 
     unsafe {
-        GLOBAL_ALLOC.put_vtable(vtable);
+        GLOBAL_ALLOC = vtable.into();
     }
 
     error
@@ -43,14 +43,16 @@ impl GlobalLibcAllocator {
         GlobalLibcAllocator { vtable: None }
     }
 
-    pub fn put_vtable(&mut self, vtable: LibcAllocVtable) {
-        self.vtable = Some(vtable);
-    }
-
     fn vtable(&self) -> &LibcAllocVtable {
         self.vtable
             .as_ref()
             .expect("Allocator functions not initialized")
+    }
+}
+
+impl From<LibcAllocVtable> for GlobalLibcAllocator {
+    fn from(value: LibcAllocVtable) -> Self {
+        GlobalLibcAllocator { vtable: Some(value) }
     }
 }
 

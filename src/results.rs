@@ -11,6 +11,15 @@ pub struct SectionBitArray {
 }
 
 impl SectionBitArray {
+    pub fn new() -> Self {
+        Self {
+            section_count: todo!(),
+            data: todo!(),
+            graph_origin_offset: todo!(),
+            dimensions: todo!(),
+        }
+    }
+
     pub fn clear(&mut self) {
         self.data.fill(0);
     }

@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use std::boxed::Box;
 use std::ptr;
 
@@ -7,7 +5,7 @@ use context::GraphSearchContext;
 use core_simd::simd::Simd;
 
 use crate::graph::*;
-use crate::jni::*;
+use crate::java::*;
 use crate::math::*;
 use crate::mem::LibcAllocVtable;
 use crate::panic::PanicHandlerFn;
@@ -33,10 +31,9 @@ impl<T> From<&[T]> for FFISlice<T> {
 }
 
 #[repr(C)]
-pub struct FFIFrustum {
-    planes: [[f32; 6]; 4],
-    pos_int: [i32; 3],
-    pos_frac: [f32; 3],
+pub struct FFICamera {
+    frustum_planes: [[f32; 6]; 4],
+    pos: [f64; 3],
 }
 
 #[repr(C)]
@@ -58,9 +55,7 @@ impl From<&SectionBitArray> for FFISectionBitArray {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_setAllocator(
-    _: *mut JEnv,
-    _: *mut JClass,
+pub unsafe extern "C" fn set_allocator(
     vtable: JPtr<LibcAllocVtable>,
 ) -> bool {
     if let Some(&vtable) = vtable.as_ptr().as_ref() {
@@ -71,9 +66,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_setAllo
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_setPanicHandler(
-    _: *mut JEnv,
-    _: *mut JClass,
+pub unsafe extern "C" fn set_panic_handler(
     panic_handler_fn_ptr: JFnPtr<PanicHandlerFn>,
 ) -> bool {
     if cfg!(feature = "panic_handler") {
@@ -89,21 +82,22 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_setPani
 }
 
 #[no_mangle]
-pub extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphCreate(
-    _: *mut JEnv,
-    _: *mut JClass,
+pub extern "C" fn graph_create(
+    render_distance: Jbyte,
     world_bottom_section_y: Jbyte,
     world_top_section_y: Jbyte,
 ) -> JPtrMut<Graph> {
-    let graph = Box::new(Graph::new());
+    let graph = Box::new(Graph::new(
+        render_distance as u8,
+        world_bottom_section_y,
+        world_top_section_y,
+    ));
 
     Box::leak(graph).into()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSetSection(
-    _: *mut JEnv,
-    _: *mut JClass,
+pub unsafe extern "C" fn graph_set_section(
     graph: JPtrMut<Graph>,
     x: Jint,
     y: Jint,
@@ -116,9 +110,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSe
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphRemoveSection(
-    _: *mut JEnv,
-    _: *mut JClass,
+pub unsafe extern "C" fn graph_remove_section(
     graph: JPtrMut<Graph>,
     x: Jint,
     y: Jint,
@@ -129,32 +121,28 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphRe
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSearch(
-    _: *mut JEnv,
-    _: *mut JClass,
+pub unsafe extern "C" fn graph_search(
     return_value: JPtrMut<FFISectionBitArray>,
     graph: JPtrMut<Graph>,
-    frustum: JPtr<FFIFrustum>,
+    camera: JPtr<FFICamera>,
     search_distance: Jfloat,
     use_occlusion_culling: Jboolean,
 ) {
     let graph = graph.into_mut_ref();
-    let frustum = frustum.as_ref();
+    let camera = camera.as_ref();
 
-    let simd_camera_pos_int = Simd::from_array(frustum.pos_int);
-    let simd_camera_pos_frac = Simd::from_array(frustum.pos_frac);
+    let simd_camera_pos = Simd::from_array(camera.pos);
     let simd_frustum_planes = [
-        Simd::from_array(frustum.planes[0]),
-        Simd::from_array(frustum.planes[1]),
-        Simd::from_array(frustum.planes[2]),
-        Simd::from_array(frustum.planes[3]),
+        Simd::from_array(camera.frustum_planes[0]),
+        Simd::from_array(camera.frustum_planes[1]),
+        Simd::from_array(camera.frustum_planes[2]),
+        Simd::from_array(camera.frustum_planes[3]),
     ];
 
     let context = GraphSearchContext::new(
         &graph.coord_space,
         simd_frustum_planes,
-        simd_camera_pos_int,
-        simd_camera_pos_frac,
+        simd_camera_pos,
         search_distance,
         use_occlusion_culling,
     );
@@ -165,9 +153,7 @@ pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphSe
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_me_jellysquid_mods_sodium_ffi_core_CoreLib_graphDelete(
-    _: *mut JEnv,
-    _: *mut JClass,
+pub unsafe extern "C" fn graph_delete(
     graph: JPtrMut<Graph>,
 ) {
     let graph_box = Box::from_raw(graph.into_mut_ref());

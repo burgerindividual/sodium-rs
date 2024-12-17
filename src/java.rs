@@ -1,9 +1,6 @@
 use core::marker::PhantomData;
 use core::mem::transmute_copy;
 
-pub type JEnv = core::ffi::c_void;
-pub type JClass = core::ffi::c_void;
-
 pub type Jbyte = i8;
 pub type Jshort = i16;
 pub type Jint = i32;

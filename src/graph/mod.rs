@@ -1,4 +1,6 @@
+use std::array;
 use std::hint::unreachable_unchecked;
+use std::num::NonZero;
 
 use context::{CombinedTestResults, GraphSearchContext};
 use coords::{GraphCoordSpace, LocalTileIndex};
@@ -16,12 +18,22 @@ pub mod coords;
 pub mod direction;
 pub mod tile;
 
+macro_rules! iterate_dirs {
+    ($graph:ident, $context:ident, $iter_dirs:expr) => {{
+        const INCOMING_DIRECTIONS: u8 = opposite($iter_dirs);
+        const TRAVERSAL_DIRECTIONS: u8 = all_except(INCOMING_DIRECTIONS);
+
+        $graph.iterate_dirs_recursive(
+            $context,
+            $context.iter_start_tile,
+            $iter_dirs,
+            Self::process_tile::<INCOMING_DIRECTIONS, TRAVERSAL_DIRECTIONS>,
+        );
+    }};
+}
+
 pub struct Graph {
-    level_0: Box<[Tile]>,
-    level_1: Box<[Tile]>,
-    level_2: Box<[Tile]>,
-    level_3: Box<[Tile]>,
-    level_4: Box<[Tile]>,
+    tile_levels: [Box<[Tile]>; 5],
 
     pub coord_space: GraphCoordSpace,
     pub render_distance: u8,
@@ -33,16 +45,46 @@ impl Graph {
     const HIGHEST_LEVEL: u8 = 4;
     const EARLY_CHECKS_LOWEST_LEVEL: u8 = 1;
 
-    pub fn new() -> Self {
+    pub fn new(render_distance: u8, world_bottom_section_y: i8, world_top_section_y: i8) -> Self {
+        let world_height_level_0 =
+            (world_top_section_y as i16 - world_bottom_section_y as i16) as u16 * 2;
+        let world_width_level_0 = (render_distance as u16 * 4) + 2;
+
+        // the size of each dimension of the graph has to be able to account for 1 full
+        // tile at the lowest resolution.
+        let graph_height_bits_level_0 = (u16::BITS as u8
+            - unsafe { NonZero::<u16>::new_unchecked(world_height_level_0) }.leading_zeros() as u8)
+            .max(Self::HIGHEST_LEVEL);
+        let graph_width_bits_level_0 = (u16::BITS as u8
+            - unsafe { NonZero::<u16>::new_unchecked(world_width_level_0) }.leading_zeros() as u8)
+            .max(Self::HIGHEST_LEVEL);
+
+        let graph_height_level_0 = 1_usize << graph_height_bits_level_0;
+        let graph_width_level_0 = 1_usize << graph_width_bits_level_0;
+
+        let tile_levels: [Box<[Tile]>; 5] = array::from_fn(|level| {
+            let mut tiles = Box::<[Tile]>::new_uninit_slice(
+                (graph_height_level_0 >> level) * (graph_width_level_0 >> level).pow(2),
+            );
+
+            for tile_uninit in tiles.iter_mut() {
+                tile_uninit.write(Default::default());
+            }
+
+            unsafe { tiles.assume_init() }
+        });
+
         Self {
-            level_0: todo!(),
-            level_1: todo!(),
-            level_2: todo!(),
-            level_3: todo!(),
-            level_4: todo!(),
-            coord_space: todo!(),
-            render_distance: todo!(),
-            results: todo!(),
+            tile_levels,
+            coord_space: GraphCoordSpace::new(
+                graph_width_bits_level_0,
+                graph_height_bits_level_0,
+                graph_width_bits_level_0,
+                world_bottom_section_y,
+                world_top_section_y,
+            ),
+            render_distance,
+            results: SectionBitArray::new(),
         }
     }
 
@@ -55,35 +97,17 @@ impl Graph {
     pub fn clear(&mut self) {
         self.results.clear();
 
-        for tile in &mut self.level_0 {
-            tile.traversal_status = TraversalStatus::Uninitialized;
-            tile.traversed_nodes = NodeStorage(Simd::splat(0));
-        }
-
-        for tile in &mut self.level_1 {
-            tile.traversal_status = TraversalStatus::Uninitialized;
-            tile.traversed_nodes = NodeStorage(Simd::splat(0));
-        }
-
-        for tile in &mut self.level_2 {
-            tile.traversal_status = TraversalStatus::Uninitialized;
-            tile.traversed_nodes = NodeStorage(Simd::splat(0));
-        }
-
-        for tile in &mut self.level_3 {
-            tile.traversal_status = TraversalStatus::Uninitialized;
-            tile.traversed_nodes = NodeStorage(Simd::splat(0));
-        }
-
-        for tile in &mut self.level_4 {
-            tile.traversal_status = TraversalStatus::Uninitialized;
-            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+        for tile_level in self.tile_levels.iter_mut() {
+            for tile in tile_level.iter_mut() {
+                tile.traversal_status = TraversalStatus::Uninitialized;
+                tile.traversed_nodes = NodeStorage(Simd::splat(0));
+            }
         }
     }
 
     fn iterate_tiles(&mut self, context: &GraphSearchContext) {
         // Center
-        self.process_tile::<ALL_DIRECTIONS>(
+        self.process_tile::<0, ALL_DIRECTIONS>(
             context,
             self.coord_space.pack_index(context.iter_start_tile),
             context.iter_start_tile,
@@ -92,171 +116,41 @@ impl Graph {
         );
 
         // Axes
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X,
-            Self::process_tile::<{ direction::inverse_set(POS_X) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_Y,
-            Self::process_tile::<{ direction::inverse_set(POS_Y) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_Z,
-            Self::process_tile::<{ direction::inverse_set(POS_Z) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X,
-            Self::process_tile::<{ direction::inverse_set(NEG_X) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_Y,
-            Self::process_tile::<{ direction::inverse_set(NEG_Y) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_Z,
-            Self::process_tile::<{ direction::inverse_set(NEG_Z) }>,
-        );
+        iterate_dirs!(self, context, POS_X);
+        iterate_dirs!(self, context, POS_Y);
+        iterate_dirs!(self, context, POS_Z);
+        iterate_dirs!(self, context, NEG_X);
+        iterate_dirs!(self, context, NEG_Y);
+        iterate_dirs!(self, context, NEG_Z);
 
         // Planes
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X | POS_Y,
-            Self::process_tile::<{ direction::inverse_set(NEG_X | NEG_Y) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X | POS_Y,
-            Self::process_tile::<{ direction::inverse_set(POS_X | NEG_Y) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X | NEG_Y,
-            Self::process_tile::<{ direction::inverse_set(NEG_X | POS_Y) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X | NEG_Y,
-            Self::process_tile::<{ direction::inverse_set(POS_X | POS_Y) }>,
-        );
+        iterate_dirs!(self, context, POS_X | POS_Y);
+        iterate_dirs!(self, context, NEG_X | POS_Y);
+        iterate_dirs!(self, context, POS_X | NEG_Y);
+        iterate_dirs!(self, context, NEG_X | NEG_Y);
 
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X | POS_Z,
-            Self::process_tile::<{ direction::inverse_set(NEG_X | NEG_Z) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X | POS_Z,
-            Self::process_tile::<{ direction::inverse_set(POS_X | NEG_Z) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X | NEG_Z,
-            Self::process_tile::<{ direction::inverse_set(NEG_X | POS_Z) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X | NEG_Z,
-            Self::process_tile::<{ direction::inverse_set(POS_X | POS_Z) }>,
-        );
+        iterate_dirs!(self, context, POS_X | POS_Z);
+        iterate_dirs!(self, context, NEG_X | POS_Z);
+        iterate_dirs!(self, context, POS_X | NEG_Z);
+        iterate_dirs!(self, context, NEG_X | NEG_Z);
 
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_Y | POS_Z,
-            Self::process_tile::<{ direction::inverse_set(NEG_Y | NEG_Z) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_Y | POS_Z,
-            Self::process_tile::<{ direction::inverse_set(POS_Y | NEG_Z) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_Y | NEG_Z,
-            Self::process_tile::<{ direction::inverse_set(NEG_Y | POS_Z) }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_Y | NEG_Z,
-            Self::process_tile::<{ direction::inverse_set(POS_Y | POS_Z) }>,
-        );
+        iterate_dirs!(self, context, POS_Y | POS_Z);
+        iterate_dirs!(self, context, NEG_Y | POS_Z);
+        iterate_dirs!(self, context, POS_Y | NEG_Z);
+        iterate_dirs!(self, context, NEG_Y | NEG_Z);
 
         // Octants
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X | POS_Y | POS_Z,
-            Self::process_tile::<{ POS_X | POS_Y | POS_Z }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X | POS_Y | POS_Z,
-            Self::process_tile::<{ NEG_X | POS_Y | POS_Z }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X | NEG_Y | POS_Z,
-            Self::process_tile::<{ NEG_X | NEG_Y | POS_Z }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X | NEG_Y | POS_Z,
-            Self::process_tile::<{ POS_X | NEG_Y | POS_Z }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X | POS_Y | NEG_Z,
-            Self::process_tile::<{ POS_X | POS_Y | NEG_Z }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X | POS_Y | NEG_Z,
-            Self::process_tile::<{ NEG_X | POS_Y | NEG_Z }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            NEG_X | NEG_Y | NEG_Z,
-            Self::process_tile::<{ NEG_X | NEG_Y | NEG_Z }>,
-        );
-        self.iterate_dirs(
-            context,
-            context.iter_start_tile,
-            POS_X | NEG_Y | NEG_Z,
-            Self::process_tile::<{ POS_X | NEG_Y | NEG_Z }>,
-        );
+        iterate_dirs!(self, context, POS_X | POS_Y | POS_Z);
+        iterate_dirs!(self, context, NEG_X | POS_Y | POS_Z);
+        iterate_dirs!(self, context, NEG_X | NEG_Y | POS_Z);
+        iterate_dirs!(self, context, POS_X | NEG_Y | POS_Z);
+        iterate_dirs!(self, context, POS_X | POS_Y | NEG_Z);
+        iterate_dirs!(self, context, NEG_X | POS_Y | NEG_Z);
+        iterate_dirs!(self, context, NEG_X | NEG_Y | NEG_Z);
+        iterate_dirs!(self, context, POS_X | NEG_Y | NEG_Z);
     }
 
-    fn iterate_dirs(
+    fn iterate_dirs_recursive(
         &mut self,
         context: &GraphSearchContext,
         start_coords: LocalTileCoords,
@@ -270,7 +164,7 @@ impl Graph {
             CombinedTestResults,
         ),
     ) {
-        let direction = direction::take_dir(&mut iter_directions);
+        let direction = direction::take_one(&mut iter_directions);
         let steps = context.direction_step_counts[direction::to_index(direction) as usize];
         let mut coords = start_coords;
 
@@ -282,7 +176,7 @@ impl Graph {
             // if the direction set is empty, we should stop recursing, and start processing
             // tiles
             if iter_directions != 0 {
-                self.iterate_dirs(context, coords, iter_directions, process_fn);
+                self.iterate_dirs_recursive(context, coords, iter_directions, process_fn);
             } else {
                 let index = self.coord_space.pack_index(start_coords);
 
@@ -298,7 +192,7 @@ impl Graph {
         }
     }
 
-    fn process_tile<const DIRECTION_SET: u8>(
+    fn process_tile<const INCOMING_DIRECTIONS: u8, const TRAVERSAL_DIRECTIONS: u8>(
         &mut self,
         context: &GraphSearchContext,
         index: LocalTileIndex,
@@ -316,6 +210,7 @@ impl Graph {
 
         // try to quickly determine whether we need to actually traverse the tile using
         // the frustum, fog, etc
+        // TODO: do the height test unconditionally?
         let test_result = if level >= Self::EARLY_CHECKS_LOWEST_LEVEL {
             context.test_tile(&self.coord_space, coords, level, parent_test_results)
         } else {
@@ -339,7 +234,7 @@ impl Graph {
             return;
         }
 
-        let combined_edge_data = self.combine_incoming_edges::<DIRECTION_SET>(coords, level);
+        let combined_edge_data = self.combine_incoming_edges::<INCOMING_DIRECTIONS>(coords, level);
 
         let tile = self.get_tile_mut(index, level);
 
@@ -351,14 +246,14 @@ impl Graph {
         }
 
         let direction_masks = &context.direction_masks[level as usize];
-        tile.traverse::<DIRECTION_SET>(combined_edge_data, direction_masks);
+        tile.traverse::<TRAVERSAL_DIRECTIONS>(combined_edge_data, direction_masks);
 
         if level > 0 && tile.children_to_traverse != 0b00000000 {
             let child_iter = tile.sorted_child_iter(index, coords, context.camera_pos_int, level);
             let child_level = level - 1;
 
             for (child_index, child_coords) in child_iter {
-                self.process_tile::<DIRECTION_SET>(
+                self.process_tile::<TRAVERSAL_DIRECTIONS, INCOMING_DIRECTIONS>(
                     context,
                     child_index,
                     child_coords,
@@ -372,29 +267,29 @@ impl Graph {
         }
     }
 
-    fn combine_incoming_edges<const DIRECTION_SET: u8>(
+    fn combine_incoming_edges<const INCOMING_DIRECTIONS: u8>(
         &mut self,
         coords: LocalTileCoords,
         level: u8,
     ) -> u8x64 {
         let mut combined_edge_data = Simd::splat(0);
 
-        if bitset::contains(DIRECTION_SET, NEG_X) {
+        if bitset::contains(INCOMING_DIRECTIONS, NEG_X) {
             combined_edge_data |= self.get_incoming_edge::<{ NEG_X }>(coords, level);
         }
-        if bitset::contains(DIRECTION_SET, direction::NEG_Y) {
+        if bitset::contains(INCOMING_DIRECTIONS, direction::NEG_Y) {
             combined_edge_data |= self.get_incoming_edge::<{ direction::NEG_Y }>(coords, level);
         }
-        if bitset::contains(DIRECTION_SET, direction::NEG_Z) {
+        if bitset::contains(INCOMING_DIRECTIONS, direction::NEG_Z) {
             combined_edge_data |= self.get_incoming_edge::<{ direction::NEG_Z }>(coords, level);
         }
-        if bitset::contains(DIRECTION_SET, direction::POS_X) {
+        if bitset::contains(INCOMING_DIRECTIONS, direction::POS_X) {
             combined_edge_data |= self.get_incoming_edge::<{ direction::POS_X }>(coords, level);
         }
-        if bitset::contains(DIRECTION_SET, direction::POS_Y) {
+        if bitset::contains(INCOMING_DIRECTIONS, direction::POS_Y) {
             combined_edge_data |= self.get_incoming_edge::<{ direction::POS_Y }>(coords, level);
         }
-        if bitset::contains(DIRECTION_SET, direction::POS_Z) {
+        if bitset::contains(INCOMING_DIRECTIONS, direction::POS_Z) {
             combined_edge_data |= self.get_incoming_edge::<{ direction::POS_Z }>(coords, level);
         }
 
@@ -422,11 +317,11 @@ impl Graph {
 
         match DIRECTION {
             NEG_X => NodeStorage::edge_neg_to_pos_x(neighbor_traversed_nodes),
-            direction::NEG_Y => NodeStorage::edge_neg_to_pos_y(neighbor_traversed_nodes),
-            direction::NEG_Z => NodeStorage::edge_neg_to_pos_z(neighbor_traversed_nodes),
-            direction::POS_X => NodeStorage::edge_pos_to_neg_x(neighbor_traversed_nodes),
-            direction::POS_Y => NodeStorage::edge_pos_to_neg_y(neighbor_traversed_nodes),
-            direction::POS_Z => NodeStorage::edge_pos_to_neg_z(neighbor_traversed_nodes),
+            NEG_Y => NodeStorage::edge_neg_to_pos_y(neighbor_traversed_nodes),
+            NEG_Z => NodeStorage::edge_neg_to_pos_z(neighbor_traversed_nodes),
+            POS_X => NodeStorage::edge_pos_to_neg_x(neighbor_traversed_nodes),
+            POS_Y => NodeStorage::edge_pos_to_neg_y(neighbor_traversed_nodes),
+            POS_Z => NodeStorage::edge_pos_to_neg_z(neighbor_traversed_nodes),
             _ => unsafe { unreachable_unchecked() },
         }
     }
@@ -511,27 +406,17 @@ impl Graph {
 
     fn get_tile_mut(&mut self, index: LocalTileIndex, level: u8) -> &mut Tile {
         unsafe {
-            match level {
-                0 => self.level_0.get_mut(index.to_usize()).unwrap_unchecked(),
-                1 => self.level_1.get_mut(index.to_usize()).unwrap_unchecked(),
-                2 => self.level_2.get_mut(index.to_usize()).unwrap_unchecked(),
-                3 => self.level_3.get_mut(index.to_usize()).unwrap_unchecked(),
-                4 => self.level_4.get_mut(index.to_usize()).unwrap_unchecked(),
-                _ => unreachable_unchecked(),
-            }
+            self.tile_levels
+                .get_unchecked_mut(level as usize)
+                .get_unchecked_mut(index.to_usize())
         }
     }
 
     fn get_tile(&self, index: LocalTileIndex, level: u8) -> &Tile {
         unsafe {
-            match level {
-                0 => self.level_0.get(index.to_usize()).unwrap_unchecked(),
-                1 => self.level_1.get(index.to_usize()).unwrap_unchecked(),
-                2 => self.level_2.get(index.to_usize()).unwrap_unchecked(),
-                3 => self.level_3.get(index.to_usize()).unwrap_unchecked(),
-                4 => self.level_4.get(index.to_usize()).unwrap_unchecked(),
-                _ => unreachable_unchecked(),
-            }
+            self.tile_levels
+                .get_unchecked(level as usize)
+                .get_unchecked(index.to_usize())
         }
     }
 
@@ -543,15 +428,16 @@ impl Graph {
         let level_1_index = self.coord_space.pack_index(level_1_coords);
         let parent_index_high_bits = level_1_index.to_child_level().0;
 
-        let level_1_tile = &mut self.level_1[level_1_index.to_usize()];
         let mut level_1_children = 0;
 
         for (level_1_child, tile_bytes) in opaque_block_bytes.chunks_exact(64).enumerate() {
             let level_0_index = LocalTileIndex(parent_index_high_bits | level_1_child as u32);
             let level_0_opaque_nodes = NodeStorage(u8x64::from_slice(tile_bytes));
 
-            self.level_0[level_0_index.to_usize()].opaque_nodes = level_0_opaque_nodes;
+            let level_0_tile = &mut self.tile_levels[0][level_0_index.to_usize()];
+            level_0_tile.opaque_nodes = level_0_opaque_nodes;
 
+            let level_1_tile = &mut self.tile_levels[1][level_1_index.to_usize()];
             let level_1_traverse_child = level_1_tile
                 .opaque_nodes
                 .downscale_to_octant::<true>(level_0_opaque_nodes, level_1_child as u8);
@@ -559,6 +445,7 @@ impl Graph {
             level_1_children |= (level_1_traverse_child as u8) << level_1_child;
         }
 
+        let level_1_tile = &mut self.tile_levels[1][level_1_index.to_usize()];
         level_1_tile.children_to_traverse = level_1_children;
 
         let level_1_opaque_nodes = level_1_tile.opaque_nodes;

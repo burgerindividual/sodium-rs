@@ -54,30 +54,32 @@
 
 [x] Top Level Iteration: graph/mod.rs
 
-[-] Building Section List and Sending to Java
-    - ideas to set full tile in bit array?
-    - make fully packed?
+[x] Stupid version of Graph.clear
 
-[-] Redesign FFI API
-    - Rename package to caffeinemc
-    - check over all parameter names
-    - write with panama or jni in mind? ask jelly
+[x] Create Masks for Processing Tiles on Planes and Axes tile.rs
 
-[-] Graph.process_tile
+[x] Graph.process_tile
     - if level > 0 && (frustum fails || fog fails), set as "Skipped" and skip
     - if tile.children_to_traverse != 0b11111111, traverse current tile, otherwise set to "Upmip"
     - if not level 0 and tile.children_to_traverse != 0b00000000, iterate and traverse children recursively
     - on the way back up, downscale child traversal data and insert into parent traversal data
     - alternatively, save this step for later by calculating the downscale results lazily
 
-[-] Create Masks for Processing Tiles on Planes and Axes tile.rs
-    - write tests for these
+[x] Graph::new
 
-[ ] Graph::new
+[x] Redesign FFI API
+    - Rename package to caffeinemc
+    - check over all parameter names
+    - write with panama or jni in mind? ask jelly (we will be using panama until further notice)
 
-[ ] Stupid version of Graph.clear
+[-] Building Section List and Sending to Java
+    - ideas to set full tile in bit array?
+    - make fully packed?
+    - dealing with levels?
 
 [ ] Operation Javacide
+
+[ ] Write more tests
 
 LATER:
 
