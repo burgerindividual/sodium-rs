@@ -183,7 +183,7 @@ impl GraphCoordSpace {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[repr(align(8))]
 pub struct LocalTileCoords(pub u16x3);
 
@@ -203,11 +203,6 @@ impl LocalTileCoords {
     pub fn block_length(level: u8) -> u8 {
         8 << level
     }
-
-    // FIXME
-    // pub fn size() -> u32 {
-    //     1 << (LEVEL * 3)
-    // }
 }
 
 impl Coords3<u16> for LocalTileCoords {

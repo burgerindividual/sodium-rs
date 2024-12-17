@@ -200,8 +200,8 @@ impl Graph {
         level: u8,
         parent_test_results: CombinedTestResults,
     ) {
-        // tile needs to be re-borrowed 3 times in this method, due to borrow checker
-        // rules. these should be optimized out.
+        // tile needs to be re-borrowed multiple times in this method, due to borrow
+        // checker rules. these should be optimized out.
         let tile = self.get_tile_mut(index, level);
 
         tile.traversal_status = TraversalStatus::Processed {
@@ -225,30 +225,37 @@ impl Graph {
             return;
         }
 
+        let children_to_traverse = tile.children_to_traverse;
+
         // if all children are present, we don't have to process this tile, and we can
         // solely process the children.
-        if tile.children_to_traverse == 0b11111111 {
-            // early exit
-            // we don't have to set the traversed nodes here, because they'll be overwritten
-            // by upmipping when needed
-            return;
+        if children_to_traverse != 0b11111111 {
+            let combined_edge_data =
+                self.combine_incoming_edges::<INCOMING_DIRECTIONS>(coords, level);
+            let tile = self.get_tile_mut(index, level);
+            let start_traversed_nodes = combined_edge_data & tile.opaque_nodes.0;
+
+            // FAST PATH: if we start the traversal with all 0s, we'll end with all 0s.
+            if start_traversed_nodes == Simd::splat(0) {
+                // early exit
+                tile.traversed_nodes = NodeStorage(Simd::splat(0));
+                return;
+            }
+
+            // if we've hit this point, we know that there's atleast 1 node that has been
+            // traversed in this tile. because of this, we know atleast part of
+            // it is visible, so we must mark that accordingly in the results.
+
+            let direction_masks = &context.direction_masks[level as usize];
+            tile.traverse::<TRAVERSAL_DIRECTIONS>(start_traversed_nodes, direction_masks);
+
+            // self.results.set_tile(coords, level, traversed_nodes, !children_to_traverse);
         }
 
-        let combined_edge_data = self.combine_incoming_edges::<INCOMING_DIRECTIONS>(coords, level);
-
-        let tile = self.get_tile_mut(index, level);
-
-        // FAST PATH: if we start with all 0s on the edges, we'll end with all 0s
-        if combined_edge_data == Simd::splat(0) {
-            // early exit
-            tile.traversed_nodes = NodeStorage(Simd::splat(0));
-            return;
-        }
-
-        let direction_masks = &context.direction_masks[level as usize];
-        tile.traverse::<TRAVERSAL_DIRECTIONS>(combined_edge_data, direction_masks);
-
-        if level > 0 && tile.children_to_traverse != 0b00000000 {
+        // TODO: how the fuck do we turn traversal data into section visibility data??
+        // this should always be false for level 0 tiles
+        if children_to_traverse != 0b00000000 {
+            let tile = self.get_tile_mut(index, level);
             let child_iter = tile.sorted_child_iter(index, coords, context.camera_pos_int, level);
             let child_level = level - 1;
 
@@ -261,10 +268,9 @@ impl Graph {
                     parent_test_results,
                 );
             }
-        } else {
-            // end of the downward traversal
-            self.results.set_tile(coords, level);
         }
+
+        // downscale here
     }
 
     fn combine_incoming_edges<const INCOMING_DIRECTIONS: u8>(

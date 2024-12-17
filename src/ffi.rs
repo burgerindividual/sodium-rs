@@ -9,7 +9,6 @@ use crate::java::*;
 use crate::math::*;
 use crate::mem::LibcAllocVtable;
 use crate::panic::PanicHandlerFn;
-use crate::results::SectionBitArray;
 
 #[repr(C)]
 pub struct FFISlice<T> {
@@ -39,25 +38,23 @@ pub struct FFICamera {
 #[repr(C)]
 pub struct FFISectionOpaqueBlocks([u8; 512]);
 
-#[repr(C)]
-pub struct FFISectionBitArray {
-    section_count: u32,
-    data: JPtr<u64>,
-}
+// #[repr(C)]
+// pub struct FFISectionBitArray {
+//     section_count: u32,
+//     data: JPtr<u64>,
+// }
 
-impl From<&SectionBitArray> for FFISectionBitArray {
-    fn from(value: &SectionBitArray) -> Self {
-        Self {
-            section_count: value.section_count,
-            data: value.data.as_ptr().into(),
-        }
-    }
-}
+// impl From<&SectionBitArray> for FFISectionBitArray {
+//     fn from(value: &SectionBitArray) -> Self {
+//         Self {
+//             section_count: value.section_count,
+//             data: value.data.as_ptr().into(),
+//         }
+//     }
+// }
 
 #[no_mangle]
-pub unsafe extern "C" fn set_allocator(
-    vtable: JPtr<LibcAllocVtable>,
-) -> bool {
+pub unsafe extern "C" fn set_allocator(vtable: JPtr<LibcAllocVtable>) -> bool {
     if let Some(&vtable) = vtable.as_ptr().as_ref() {
         crate::mem::set_allocator(vtable)
     } else {
@@ -66,9 +63,7 @@ pub unsafe extern "C" fn set_allocator(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn set_panic_handler(
-    panic_handler_fn_ptr: JFnPtr<PanicHandlerFn>,
-) -> bool {
+pub unsafe extern "C" fn set_panic_handler(panic_handler_fn_ptr: JFnPtr<PanicHandlerFn>) -> bool {
     if cfg!(feature = "panic_handler") {
         if let Some(panic_handler_fn_ptr) = panic_handler_fn_ptr.as_fn_ptr() {
             crate::panic::set_panic_handler(panic_handler_fn_ptr);
@@ -110,24 +105,19 @@ pub unsafe extern "C" fn graph_set_section(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn graph_remove_section(
-    graph: JPtrMut<Graph>,
-    x: Jint,
-    y: Jint,
-    z: Jint,
-) {
+pub unsafe extern "C" fn graph_remove_section(graph: JPtrMut<Graph>, x: Jint, y: Jint, z: Jint) {
     let graph = graph.into_mut_ref();
     graph.remove_section(i32x3::from_xyz(x, y, z));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn graph_search(
-    return_value: JPtrMut<FFISectionBitArray>,
+    // return_value: JPtrMut<FFISectionBitArray>,
     graph: JPtrMut<Graph>,
     camera: JPtr<FFICamera>,
     search_distance: Jfloat,
     use_occlusion_culling: Jboolean,
-) {
+) -> u32 {
     let graph = graph.into_mut_ref();
     let camera = camera.as_ref();
 
@@ -149,13 +139,12 @@ pub unsafe extern "C" fn graph_search(
 
     graph.cull(&context);
 
-    *return_value.into_mut_ref() = (&graph.results).into();
+    // *return_value.into_mut_ref() = (&graph.results).into();
+    graph.results.get_count()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn graph_delete(
-    graph: JPtrMut<Graph>,
-) {
+pub unsafe extern "C" fn graph_delete(graph: JPtrMut<Graph>) {
     let graph_box = Box::from_raw(graph.into_mut_ref());
     drop(graph_box);
 }

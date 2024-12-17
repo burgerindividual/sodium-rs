@@ -517,7 +517,7 @@ impl Tile {
     // TODO: review all fast paths
     pub fn traverse<const DIRECTION_SET: u8>(
         &mut self,
-        combined_edge_data: u8x64,
+        start_traversed_nodes: u8x64,
         direction_masks: &[u8x64; 6],
     ) {
         self.traversal_status = TraversalStatus::Processed {
@@ -553,7 +553,7 @@ impl Tile {
             pos_z_mask |= direction_masks[direction::to_index(direction::POS_Z) as usize];
         }
 
-        let mut traversed_nodes = combined_edge_data & opaque_nodes;
+        let mut traversed_nodes = start_traversed_nodes;
 
         // maximum of 24 steps to complete the bfs (TODO: is this really faster than a
         // normal loop?)
