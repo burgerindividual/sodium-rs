@@ -5,14 +5,19 @@ use std::ptr::addr_of_mut;
 use core_simd::simd::prelude::*;
 use core_simd::simd::ToBytes;
 
-use super::coords::{LocalTileCoords, LocalTileIndex};
-use super::{direction, u16x3, Coords3};
 use crate::bitset;
+use crate::graph::direction::*;
+use crate::math::{u16x3, Coords3};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+// TODO: switch to YZX or YXZ indexing from ZYX to allow faster splitting into
+// regions of 8x4x8
 pub struct NodeStorage(pub u8x64);
 
 impl NodeStorage {
+    pub const EMPTY: Self = Self(Simd::splat(0));
+    pub const FILLED: Self = Self(Simd::splat(0xFF));
+
     const CHILD_TRAVERSE_THRESHOLD: f32 = 0.8;
 
     #[cfg(test)]
@@ -479,6 +484,7 @@ impl NodeStorage {
 #[derive(Debug)]
 pub struct Tile {
     pub traversed_nodes: NodeStorage,
+    pub visible_nodes: NodeStorage,
     pub opaque_nodes: NodeStorage,
     // There are 8 possible child nodes, each bit represents a child.
     // Indices are formatted as XYZ.
@@ -503,9 +509,10 @@ pub enum TraversalStatus {
 impl Default for Tile {
     fn default() -> Self {
         Self {
-            traversed_nodes: NodeStorage(Simd::splat(0)),
+            traversed_nodes: NodeStorage::EMPTY,
+            visible_nodes: NodeStorage::EMPTY,
             // visibility fully blocked by default
-            opaque_nodes: NodeStorage(Simd::splat(0xFF)),
+            opaque_nodes: NodeStorage::FILLED,
             children_to_traverse: 0,
             traversal_status: TraversalStatus::Uninitialized,
         }
@@ -513,70 +520,94 @@ impl Default for Tile {
 }
 
 impl Tile {
+    pub fn set_empty_traversal(&mut self) {
+        self.traversed_nodes = NodeStorage::EMPTY;
+        self.visible_nodes = NodeStorage::EMPTY;
+    }
+
     // TODO: make sure this is sound with up and downscaling
     // TODO: review all fast paths
-    pub fn traverse<const DIRECTION_SET: u8>(
+    pub fn find_visible_nodes<const TRAVERSAL_DIRECTIONS: u8>(
         &mut self,
-        start_traversed_nodes: u8x64,
+        incoming_traversed_nodes: u8x64,
         direction_masks: &[u8x64; 6],
     ) {
-        self.traversal_status = TraversalStatus::Processed {
-            children_upmipped: 0,
-        };
+        // the uses of these variables should optimize out, as they're evaluated at
+        // comptime
+        let do_shift_neg_x = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_X) };
+        let do_shift_pos_x = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_Y) };
+        let do_shift_neg_y = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_Z) };
+        let do_shift_pos_y = const { bitset::contains(TRAVERSAL_DIRECTIONS, POS_X) };
+        let do_shift_neg_z = const { bitset::contains(TRAVERSAL_DIRECTIONS, POS_Y) };
+        let do_shift_pos_z = const { bitset::contains(TRAVERSAL_DIRECTIONS, POS_Z) };
+
+        let use_x_mask = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_X | POS_X) };
+        let use_y_mask = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_Y | POS_Y) };
+        let use_z_mask = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_Z | POS_Z) };
+
+        // these should be optimized out if they aren't used
+        let neg_x_mask = direction_masks[to_index(NEG_X) as usize];
+        let pos_x_mask = direction_masks[to_index(POS_X) as usize];
+        let neg_y_mask = direction_masks[to_index(NEG_Y) as usize];
+        let pos_y_mask = direction_masks[to_index(POS_Y) as usize];
+        let neg_z_mask = direction_masks[to_index(NEG_Z) as usize];
+        let pos_z_mask = direction_masks[to_index(POS_Z) as usize];
 
         let opaque_nodes = self.opaque_nodes.0;
 
-        // if DIRECTION_SET.count_ones() == 3 {
+        // if TRAVERSAL_DIRECTIONS.count_ones() == 3 {
         // TODO OPT: fast path for air in octants: if opaque is all 0s, and the corner
         // bit in the edge data is 1, the whole thing will be 1s
         // }
 
-        let mut neg_x_mask = opaque_nodes;
-        let mut neg_y_mask = opaque_nodes;
-        let mut neg_z_mask = opaque_nodes;
-        let mut pos_x_mask = opaque_nodes;
-        let mut pos_y_mask = opaque_nodes;
-        let mut pos_z_mask = opaque_nodes;
+        // the traversal masks always are used, and are combined prior to traversal with
+        // the opaque nodes mask.
+        let mut neg_x_combined_mask = opaque_nodes;
+        let mut neg_y_combined_mask = opaque_nodes;
+        let mut neg_z_combined_mask = opaque_nodes;
+        let mut pos_x_combined_mask = opaque_nodes;
+        let mut pos_y_combined_mask = opaque_nodes;
+        let mut pos_z_combined_mask = opaque_nodes;
 
         // we need to add direction-specific masks when there are pairs of opposing
         // directions
-        if bitset::contains(DIRECTION_SET, direction::NEG_X | direction::POS_X) {
-            neg_x_mask |= direction_masks[direction::to_index(direction::NEG_X) as usize];
-            pos_x_mask |= direction_masks[direction::to_index(direction::POS_X) as usize];
+        if use_x_mask {
+            neg_x_combined_mask |= direction_masks[to_index(NEG_X) as usize];
+            pos_x_combined_mask |= direction_masks[to_index(POS_X) as usize];
         }
-        if bitset::contains(DIRECTION_SET, direction::NEG_Y | direction::POS_Y) {
-            neg_y_mask |= direction_masks[direction::to_index(direction::NEG_Y) as usize];
-            pos_y_mask |= direction_masks[direction::to_index(direction::POS_Y) as usize];
+        if use_y_mask {
+            neg_y_combined_mask |= direction_masks[to_index(NEG_Y) as usize];
+            pos_y_combined_mask |= direction_masks[to_index(POS_Y) as usize];
         }
-        if bitset::contains(DIRECTION_SET, direction::NEG_Z | direction::POS_Y) {
-            neg_z_mask |= direction_masks[direction::to_index(direction::NEG_Z) as usize];
-            pos_z_mask |= direction_masks[direction::to_index(direction::POS_Z) as usize];
+        if use_z_mask {
+            neg_z_combined_mask |= direction_masks[to_index(NEG_Z) as usize];
+            pos_z_combined_mask |= direction_masks[to_index(POS_Z) as usize];
         }
 
-        let mut traversed_nodes = start_traversed_nodes;
+        let mut traversed_nodes = incoming_traversed_nodes;
 
         // maximum of 24 steps to complete the bfs (TODO: is this really faster than a
         // normal loop?)
         for _ in 0..24 {
             let previous_traversed_nodes = traversed_nodes;
 
-            if bitset::contains(DIRECTION_SET, direction::NEG_X) {
-                traversed_nodes |= NodeStorage::shift_neg_x(traversed_nodes) & neg_x_mask;
+            if do_shift_neg_x {
+                traversed_nodes |= NodeStorage::shift_neg_x(traversed_nodes) & neg_x_combined_mask;
             }
-            if bitset::contains(DIRECTION_SET, direction::NEG_Y) {
-                traversed_nodes |= NodeStorage::shift_neg_y(traversed_nodes) & neg_y_mask;
+            if do_shift_neg_y {
+                traversed_nodes |= NodeStorage::shift_neg_y(traversed_nodes) & neg_y_combined_mask;
             }
-            if bitset::contains(DIRECTION_SET, direction::NEG_Z) {
-                traversed_nodes |= NodeStorage::shift_neg_z(traversed_nodes) & neg_z_mask;
+            if do_shift_neg_z {
+                traversed_nodes |= NodeStorage::shift_neg_z(traversed_nodes) & neg_z_combined_mask;
             }
-            if bitset::contains(DIRECTION_SET, direction::POS_X) {
-                traversed_nodes |= NodeStorage::shift_pos_x(traversed_nodes) & pos_x_mask;
+            if do_shift_pos_x {
+                traversed_nodes |= NodeStorage::shift_pos_x(traversed_nodes) & pos_x_combined_mask;
             }
-            if bitset::contains(DIRECTION_SET, direction::POS_Y) {
-                traversed_nodes |= NodeStorage::shift_pos_y(traversed_nodes) & pos_y_mask;
+            if do_shift_pos_y {
+                traversed_nodes |= NodeStorage::shift_pos_y(traversed_nodes) & pos_y_combined_mask;
             }
-            if bitset::contains(DIRECTION_SET, direction::POS_Z) {
-                traversed_nodes |= NodeStorage::shift_pos_z(traversed_nodes) & pos_z_mask;
+            if do_shift_pos_z {
+                traversed_nodes |= NodeStorage::shift_pos_z(traversed_nodes) & pos_z_combined_mask;
             }
 
             if traversed_nodes == previous_traversed_nodes {
@@ -585,108 +616,67 @@ impl Tile {
         }
 
         self.traversed_nodes = NodeStorage(traversed_nodes);
-    }
 
-    pub fn sorted_child_iter(
-        &self,
-        index: LocalTileIndex,
-        coords: LocalTileCoords,
-        camera_block_coords: u16x3,
-        level: u8,
-    ) -> SortedChildIterator {
-        SortedChildIterator::new(
-            index,
-            coords,
-            camera_block_coords,
-            self.children_to_traverse,
-            level,
-        )
-    }
-}
+        // we have to do one more traversal step, individually shifting the traversed
+        // nodes each direction without masking the opaque nodes. This gives us the
+        // visible, possibly opaque neighbors of the currently traversed nodes.
+        let mut visible_nodes = traversed_nodes;
 
-pub struct SortedChildIterator {
-    parent_index_high_bits: u32,
-    children_index_low_bits: u32,
-    parent_coords_high_bits: u16x3,
-    // this would fit in a u8x3, but keeping the elements as u16 makes some things faster
-    children_coords_low_bits: u16x3,
-    children_present: u8,
-}
+        if do_shift_neg_x {
+            let mut shifted = NodeStorage::shift_neg_x(traversed_nodes);
 
-impl SortedChildIterator {
-    pub fn new(
-        index: LocalTileIndex,
-        coords: LocalTileCoords,
-        camera_block_coords: u16x3,
-        children_present: u8,
-        level: u8,
-    ) -> Self {
-        let parent_index_high_bits = index.to_child_level().0;
-        let parent_coords_high_bits = coords.to_child_level().0;
+            if use_x_mask {
+                shifted &= neg_x_mask;
+            }
 
-        let middle_coords = coords.to_block_coords(level)
-            + Simd::splat(LocalTileCoords::block_length(level) as u16 / 2);
-        let first_child_coords = camera_block_coords.simd_ge(middle_coords);
-        // this will create an index of a child with the bit order XYZ
-        let first_child_index = first_child_coords.to_bitmask() as u32;
-
-        // broadcast first child to 8 "lanes".
-        // we only use the bottom 3 bits of each lane, but the lane width is 4 bits to
-        // allow for faster indexing.
-        let mut children_index_low_bits =
-            first_child_index * 0b0001_0001_0001_0001_0001_0001_0001_0001;
-        // toggle different bits on specific axis to replicate addition or subtraction
-        // in the first lane, the value is the original.
-        // in the next 3 lanes, the value is moved on 1 axis.
-        // in the following 3 lanes, the value is moved on 2 axes.
-        // in the final lane, the value is moved on 3 axes.
-        // this stays sorted by manhattan distance, because each move on an axis counts
-        // as 1 extra distance
-        children_index_low_bits ^= 0b0111_0101_0110_0011_0100_0010_0001_0000;
-
-        // same concept as previous, but vertical instead of horizontal
-        let children_coords_low_bits = first_child_coords.to_int().cast::<u16>()
-            ^ Simd::from_array([
-                // top bits need to be set to 0
-                0b11111111_11101000,
-                0b11111111_10110100,
-                0b11111111_11010010,
-            ]);
-
-        Self {
-            parent_index_high_bits,
-            children_index_low_bits,
-            parent_coords_high_bits,
-            children_coords_low_bits,
-            children_present,
+            visible_nodes |= shifted;
         }
-    }
-}
+        if do_shift_neg_y {
+            let mut shifted = NodeStorage::shift_neg_y(traversed_nodes);
 
-impl Iterator for SortedChildIterator {
-    // TODO: consider changing this to only iterate on coords?
-    type Item = (LocalTileIndex, LocalTileCoords);
+            if use_y_mask {
+                shifted &= neg_y_mask;
+            }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        // Description of the iteration approach on daniel lemire's blog
-        // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
-        if self.children_present != 0 {
-            let child_number = self.children_present.trailing_zeros();
-
-            let child_index_low_bits = (self.children_index_low_bits >> (child_number * 4)) & 0b111;
-            let child_index = LocalTileIndex(self.parent_index_high_bits | child_index_low_bits);
-
-            let child_coords_low_bits = (self.children_coords_low_bits
-                >> Simd::splat(child_number as u16))
-                & Simd::splat(0b1);
-            let child_coords =
-                LocalTileCoords(self.parent_coords_high_bits | child_coords_low_bits);
-
-            self.children_present &= self.children_present - 1;
-
-            Some((child_index, child_coords))
-        } else {
-            None
+            visible_nodes |= shifted;
         }
+        if do_shift_neg_z {
+            let mut shifted = NodeStorage::shift_neg_z(traversed_nodes);
+
+            if use_z_mask {
+                shifted &= neg_z_mask;
+            }
+
+            visible_nodes |= shifted;
+        }
+        if do_shift_pos_x {
+            let mut shifted = NodeStorage::shift_pos_x(traversed_nodes);
+
+            if use_x_mask {
+                shifted &= pos_x_mask;
+            }
+
+            visible_nodes |= shifted;
+        }
+        if do_shift_pos_y {
+            let mut shifted = NodeStorage::shift_pos_y(traversed_nodes);
+
+            if use_y_mask {
+                shifted &= pos_y_mask;
+            }
+
+            visible_nodes |= shifted;
+        }
+        if do_shift_pos_z {
+            let mut shifted = NodeStorage::shift_pos_z(traversed_nodes);
+
+            if use_z_mask {
+                shifted &= pos_z_mask;
+            }
+
+            visible_nodes |= shifted;
+        }
+
+        self.visible_nodes = NodeStorage(visible_nodes);
     }
 }

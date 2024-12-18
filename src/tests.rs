@@ -31,7 +31,7 @@ fn upscale_tile() {
 
     for src_octant in 0..8 {
         for _ in 0..ITERATIONS {
-            let mut src_node_storage = NodeStorage(Simd::splat(0));
+            let mut src_node_storage = NodeStorage::EMPTY;
 
             rand.fill_bytes(src_node_storage.0.as_mut_array());
 
@@ -75,8 +75,8 @@ fn downscale_tile() {
 
     for dst_octant in 0..8 {
         for _ in 0..ITERATIONS {
-            let mut src_node_storage = NodeStorage(Simd::splat(0));
-            let mut dst_node_storage_modified = NodeStorage(Simd::splat(0));
+            let mut src_node_storage = NodeStorage::EMPTY;
+            let mut dst_node_storage_modified = NodeStorage::EMPTY;
 
             rand.fill_bytes(src_node_storage.0.as_mut_array());
             rand.fill_bytes(dst_node_storage_modified.0.as_mut_array());

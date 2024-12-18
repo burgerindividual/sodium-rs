@@ -16,7 +16,7 @@ debug-assertions = true
 inherits = "dev"
 
 [profile.release]
-panic = "abort"
+panic = "unwind"
 debug = true
 lto = "fat"
 codegen-units = 1
@@ -27,6 +27,7 @@ lto = "off"
 
 [profile.production]
 inherits = "release"
+panic = "abort"
 lto = "fat"
 debug = false
 strip = "debuginfo"

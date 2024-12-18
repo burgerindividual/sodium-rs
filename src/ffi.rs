@@ -2,7 +2,9 @@ use std::boxed::Box;
 use std::ptr;
 
 use context::GraphSearchContext;
+use coords::LocalTileCoords;
 use core_simd::simd::Simd;
+use tile::NodeStorage;
 
 use crate::graph::*;
 use crate::java::*;
@@ -20,7 +22,7 @@ impl<T> From<&[T]> for FFISlice<T> {
     fn from(value: &[T]) -> Self {
         Self {
             count: value.len().try_into().expect("len is not a valid u32"),
-            data_ptr: if value.len() == 0 {
+            data_ptr: if value.is_empty() {
                 ptr::null::<T>().into()
             } else {
                 value.as_ptr().into()
@@ -38,20 +40,20 @@ pub struct FFICamera {
 #[repr(C)]
 pub struct FFISectionOpaqueBlocks([u8; 512]);
 
-// #[repr(C)]
-// pub struct FFISectionBitArray {
-//     section_count: u32,
-//     data: JPtr<u64>,
-// }
+#[repr(C)]
+pub struct FFIVisibleSectionsTile {
+    visible_sections_ptr: JPtr<[u64; 8]>,
+    tile_coords: [u16; 3],
+}
 
-// impl From<&SectionBitArray> for FFISectionBitArray {
-//     fn from(value: &SectionBitArray) -> Self {
-//         Self {
-//             section_count: value.section_count,
-//             data: value.data.as_ptr().into(),
-//         }
-//     }
-// }
+impl FFIVisibleSectionsTile {
+    pub fn new(visible_sections: *const NodeStorage, coords: LocalTileCoords) -> Self {
+        Self {
+            visible_sections_ptr: visible_sections.cast::<[u64; 8]>().into(),
+            tile_coords: coords.0.to_array(),
+        }
+    }
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn set_allocator(vtable: JPtr<LibcAllocVtable>) -> bool {
@@ -112,12 +114,12 @@ pub unsafe extern "C" fn graph_remove_section(graph: JPtrMut<Graph>, x: Jint, y:
 
 #[no_mangle]
 pub unsafe extern "C" fn graph_search(
-    // return_value: JPtrMut<FFISectionBitArray>,
+    return_value: JPtrMut<FFISlice<FFIVisibleSectionsTile>>,
     graph: JPtrMut<Graph>,
     camera: JPtr<FFICamera>,
     search_distance: Jfloat,
     use_occlusion_culling: Jboolean,
-) -> u32 {
+) {
     let graph = graph.into_mut_ref();
     let camera = camera.as_ref();
 
@@ -139,8 +141,7 @@ pub unsafe extern "C" fn graph_search(
 
     graph.cull(&context);
 
-    // *return_value.into_mut_ref() = (&graph.results).into();
-    graph.results.get_count()
+    *return_value.into_mut_ref() = (graph.visible_tiles.as_slice()).into();
 }
 
 #[no_mangle]

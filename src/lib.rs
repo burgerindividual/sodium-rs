@@ -9,7 +9,6 @@ mod graph;
 mod java;
 mod math;
 mod mem;
-mod results;
 #[macro_use]
 mod panic;
 mod tests;

@@ -52,7 +52,9 @@ impl GlobalLibcAllocator {
 
 impl From<LibcAllocVtable> for GlobalLibcAllocator {
     fn from(value: LibcAllocVtable) -> Self {
-        GlobalLibcAllocator { vtable: Some(value) }
+        GlobalLibcAllocator {
+            vtable: Some(value),
+        }
     }
 }
 
@@ -65,7 +67,7 @@ unsafe impl GlobalAlloc for GlobalLibcAllocator {
         (self.vtable().aligned_free)(ptr)
     }
 
-    /// Mirrors the unix libc impl for GlobalAlloc
+    // Mirrors the unix libc impl for GlobalAlloc
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         if layout.align() <= MIN_ALIGN && layout.align() <= layout.size() {

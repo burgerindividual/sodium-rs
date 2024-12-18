@@ -27,7 +27,11 @@ pub const fn opposite(direction_set: u8) -> u8 {
 /// Removes a direction from the direction set, and returns it
 pub const fn take_one(direction_set: &mut u8) -> u8 {
     let prev_set = *direction_set;
+
+    // removes the lowest bit in the bit set
     *direction_set &= *direction_set - 1;
-    let direction = *direction_set ^ prev_set;
-    direction
+
+    // the difference between the old set and the new set is the removed bit.
+    // we return that bit.
+    *direction_set ^ prev_set
 }

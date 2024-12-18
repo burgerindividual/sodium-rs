@@ -1,5 +1,4 @@
 use std::hint::assert_unchecked;
-use std::mem::MaybeUninit;
 
 use core_simd::simd::prelude::*;
 
@@ -86,6 +85,7 @@ impl GraphCoordSpace {
         #[cfg(target_feature = "avx2")]
         unsafe {
             use std::arch::x86_64::*;
+            use std::mem::MaybeUninit;
 
             // the compiler is known to shit itself when coming across the line below. it's
             // very fragile. currently, this produces optimal codegen.
@@ -119,6 +119,8 @@ impl GraphCoordSpace {
 
         #[cfg(not(target_feature = "avx2"))]
         {
+            use std::mem::transmute;
+
             let broadcasted_coords =
                 simd_swizzle!(coords.0, Simd::splat(0), [0, 1, 2, 3, 3, 3, 3, 3,]);
 
@@ -277,6 +279,93 @@ impl Iterator for UnorderedChildIter {
             self.children_present &= self.children_present - 1;
             let child_index = LocalTileIndex(self.parent_index_high_bits | child_number);
             Some((child_index, child_number as u8))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct SortedChildIterator {
+    parent_index_high_bits: u32,
+    children_index_low_bits: u32,
+    parent_coords_high_bits: u16x3,
+    // this would fit in a u8x3, but keeping the elements as u16 makes some things faster
+    children_coords_low_bits: u16x3,
+    children_present: u8,
+}
+
+impl SortedChildIterator {
+    pub fn new(
+        index: LocalTileIndex,
+        coords: LocalTileCoords,
+        camera_block_coords: u16x3,
+        children_present: u8,
+        level: u8,
+    ) -> Self {
+        let parent_index_high_bits = index.to_child_level().0;
+        let parent_coords_high_bits = coords.to_child_level().0;
+
+        let middle_coords = coords.to_block_coords(level)
+            + Simd::splat(LocalTileCoords::block_length(level) as u16 / 2);
+        let first_child_coords = camera_block_coords.simd_ge(middle_coords);
+        // this will create an index of a child with the bit order XYZ
+        let first_child_index = first_child_coords.to_bitmask() as u32;
+
+        // broadcast first child to 8 "lanes".
+        // we only use the bottom 3 bits of each lane, but the lane width is 4 bits to
+        // allow for faster indexing.
+        let mut children_index_low_bits =
+            first_child_index * 0b0001_0001_0001_0001_0001_0001_0001_0001;
+        // toggle different bits on specific axis to replicate addition or subtraction
+        // in the first lane, the value is the original.
+        // in the next 3 lanes, the value is moved on 1 axis.
+        // in the following 3 lanes, the value is moved on 2 axes.
+        // in the final lane, the value is moved on 3 axes.
+        // this stays sorted by manhattan distance, because each move on an axis counts
+        // as 1 extra distance
+        children_index_low_bits ^= 0b0111_0101_0110_0011_0100_0010_0001_0000;
+
+        // same concept as previous, but vertical instead of horizontal
+        let children_coords_low_bits = first_child_coords.to_int().cast::<u16>()
+            ^ Simd::from_array([
+                // top bits need to be set to 0
+                0b11111111_11101000,
+                0b11111111_10110100,
+                0b11111111_11010010,
+            ]);
+
+        Self {
+            parent_index_high_bits,
+            children_index_low_bits,
+            parent_coords_high_bits,
+            children_coords_low_bits,
+            children_present,
+        }
+    }
+}
+
+impl Iterator for SortedChildIterator {
+    // TODO: consider changing this to only iterate on coords?
+    type Item = (LocalTileIndex, LocalTileCoords);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Description of the iteration approach on daniel lemire's blog
+        // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
+        if self.children_present != 0 {
+            let child_number = self.children_present.trailing_zeros();
+
+            let child_index_low_bits = (self.children_index_low_bits >> (child_number * 4)) & 0b111;
+            let child_index = LocalTileIndex(self.parent_index_high_bits | child_index_low_bits);
+
+            let child_coords_low_bits = (self.children_coords_low_bits
+                >> Simd::splat(child_number as u16))
+                & Simd::splat(0b1);
+            let child_coords =
+                LocalTileCoords(self.parent_coords_high_bits | child_coords_low_bits);
+
+            self.children_present &= self.children_present - 1;
+
+            Some((child_index, child_coords))
         } else {
             None
         }

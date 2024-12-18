@@ -3,15 +3,15 @@ use std::hint::unreachable_unchecked;
 use std::num::NonZero;
 
 use context::{CombinedTestResults, GraphSearchContext};
-use coords::{GraphCoordSpace, LocalTileIndex};
+use coords::{GraphCoordSpace, LocalTileIndex, SortedChildIterator};
 use core_simd::simd::prelude::*;
 use direction::*;
 use tile::{NodeStorage, Tile, TraversalStatus};
 
 use self::coords::LocalTileCoords;
 use crate::bitset;
+use crate::ffi::FFIVisibleSectionsTile;
 use crate::math::*;
-use crate::results::SectionBitArray;
 
 pub mod context;
 pub mod coords;
@@ -38,7 +38,8 @@ pub struct Graph {
     pub coord_space: GraphCoordSpace,
     pub render_distance: u8,
 
-    pub results: SectionBitArray,
+    // TODO: include references to visible section arrays
+    pub visible_tiles: Vec<FFIVisibleSectionsTile>,
 }
 
 impl Graph {
@@ -84,7 +85,7 @@ impl Graph {
                 world_top_section_y,
             ),
             render_distance,
-            results: SectionBitArray::new(),
+            visible_tiles: Vec::with_capacity(100), // probably not a bad start
         }
     }
 
@@ -95,24 +96,24 @@ impl Graph {
     }
 
     pub fn clear(&mut self) {
-        self.results.clear();
+        self.visible_tiles.clear();
 
         for tile_level in self.tile_levels.iter_mut() {
             for tile in tile_level.iter_mut() {
                 tile.traversal_status = TraversalStatus::Uninitialized;
-                tile.traversed_nodes = NodeStorage(Simd::splat(0));
+                tile.traversed_nodes = NodeStorage::EMPTY;
+                tile.visible_nodes = NodeStorage::EMPTY;
             }
         }
     }
 
     fn iterate_tiles(&mut self, context: &GraphSearchContext) {
         // Center
-        self.process_tile::<0, ALL_DIRECTIONS>(
+        self.process_upper_tile(
             context,
             self.coord_space.pack_index(context.iter_start_tile),
             context.iter_start_tile,
-            Self::HIGHEST_LEVEL,
-            CombinedTestResults::ALL_PARTIAL,
+            Self::process_tile::<0, ALL_DIRECTIONS>,
         );
 
         // Axes
@@ -155,7 +156,7 @@ impl Graph {
         context: &GraphSearchContext,
         start_coords: LocalTileCoords,
         mut iter_directions: u8,
-        process_fn: fn(
+        inner_process_fn: fn(
             &mut Graph,
             &GraphSearchContext,
             LocalTileIndex,
@@ -176,20 +177,43 @@ impl Graph {
             // if the direction set is empty, we should stop recursing, and start processing
             // tiles
             if iter_directions != 0 {
-                self.iterate_dirs_recursive(context, coords, iter_directions, process_fn);
+                self.iterate_dirs_recursive(context, coords, iter_directions, inner_process_fn);
             } else {
                 let index = self.coord_space.pack_index(start_coords);
 
-                process_fn(
-                    self,
-                    context,
-                    index,
-                    coords,
-                    Self::HIGHEST_LEVEL,
-                    CombinedTestResults::ALL_PARTIAL,
-                );
+                self.process_upper_tile(context, index, coords, inner_process_fn);
             }
         }
+    }
+
+    fn process_upper_tile(
+        &mut self,
+        context: &GraphSearchContext,
+        index: LocalTileIndex,
+        coords: LocalTileCoords,
+        inner_process_fn: fn(
+            &mut Graph,
+            &GraphSearchContext,
+            LocalTileIndex,
+            LocalTileCoords,
+            u8,
+            CombinedTestResults,
+        ),
+    ) {
+        inner_process_fn(
+            self,
+            context,
+            index,
+            coords,
+            Self::HIGHEST_LEVEL,
+            CombinedTestResults::ALL_PARTIAL,
+        );
+
+        let tile = self.get_tile(index, Self::HIGHEST_LEVEL);
+        self.visible_tiles.push(FFIVisibleSectionsTile::new(
+            &raw const tile.visible_nodes,
+            coords,
+        ));
     }
 
     fn process_tile<const INCOMING_DIRECTIONS: u8, const TRAVERSAL_DIRECTIONS: u8>(
@@ -201,7 +225,7 @@ impl Graph {
         parent_test_results: CombinedTestResults,
     ) {
         // tile needs to be re-borrowed multiple times in this method, due to borrow
-        // checker rules. these should be optimized out.
+        // checker rules. these should get optimized out.
         let tile = self.get_tile_mut(index, level);
 
         tile.traversal_status = TraversalStatus::Processed {
@@ -221,7 +245,7 @@ impl Graph {
 
         if test_result == CombinedTestResults::OUTSIDE {
             // early exit
-            tile.traversed_nodes = NodeStorage(Simd::splat(0));
+            tile.set_empty_traversal();
             return;
         }
 
@@ -232,13 +256,14 @@ impl Graph {
         if children_to_traverse != 0b11111111 {
             let combined_edge_data =
                 self.combine_incoming_edges::<INCOMING_DIRECTIONS>(coords, level);
+
             let tile = self.get_tile_mut(index, level);
-            let start_traversed_nodes = combined_edge_data & tile.opaque_nodes.0;
+            let incoming_traversed_nodes = combined_edge_data & tile.opaque_nodes.0;
 
             // FAST PATH: if we start the traversal with all 0s, we'll end with all 0s.
-            if start_traversed_nodes == Simd::splat(0) {
+            if incoming_traversed_nodes == Simd::splat(0) {
                 // early exit
-                tile.traversed_nodes = NodeStorage(Simd::splat(0));
+                tile.set_empty_traversal();
                 return;
             }
 
@@ -247,16 +272,24 @@ impl Graph {
             // it is visible, so we must mark that accordingly in the results.
 
             let direction_masks = &context.direction_masks[level as usize];
-            tile.traverse::<TRAVERSAL_DIRECTIONS>(start_traversed_nodes, direction_masks);
+            tile.find_visible_nodes::<TRAVERSAL_DIRECTIONS>(
+                incoming_traversed_nodes,
+                direction_masks,
+            );
 
-            // self.results.set_tile(coords, level, traversed_nodes, !children_to_traverse);
+            // self.results.set_tile(coords, level, traversed_nodes,
+            // !children_to_traverse);
         }
 
-        // TODO: how the fuck do we turn traversal data into section visibility data??
         // this should always be false for level 0 tiles
         if children_to_traverse != 0b00000000 {
-            let tile = self.get_tile_mut(index, level);
-            let child_iter = tile.sorted_child_iter(index, coords, context.camera_pos_int, level);
+            let child_iter = SortedChildIterator::new(
+                index,
+                coords,
+                context.camera_pos_int,
+                children_to_traverse,
+                level,
+            );
             let child_level = level - 1;
 
             for (child_index, child_coords) in child_iter {
@@ -267,10 +300,17 @@ impl Graph {
                     child_level,
                     parent_test_results,
                 );
+
+                // unconditionally downscale visibility data from children to propogate visible
+                // sections up
+                let child_tile = self.get_tile(child_index, child_level);
+                let child_visible_nodes = child_tile.visible_nodes;
+
+                let tile = self.get_tile_mut(index, level);
+                tile.visible_nodes
+                    .downscale_to_octant::<false>(child_visible_nodes, child_index.child_number());
             }
         }
-
-        // downscale here
     }
 
     fn combine_incoming_edges<const INCOMING_DIRECTIONS: u8>(
