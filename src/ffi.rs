@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use std::boxed::Box;
 
 use context::GraphSearchContext;
@@ -11,17 +13,8 @@ use crate::mem::*;
 use crate::panic::PanicHandlerFn;
 use crate::{mem, panic};
 
-pub type Jbyte = i8;
-pub type Jshort = i16;
-pub type Jint = i32;
-pub type Jlong = i64;
-
-pub type Jfloat = f32;
-pub type Jdouble = f64;
-
-pub type Jchar = u16;
-
-pub type Jboolean = bool;
+type JEnv = core::ffi::c_void;
+type JClass = core::ffi::c_void;
 
 #[repr(C)]
 pub struct FFISlice<T> {
@@ -63,7 +56,9 @@ impl FFIVisibleSectionsTile {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn set_allocator(
+pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_setAllocator(
+    _: *mut JEnv,
+    _: *mut JClass,
     aligned_alloc_fn_ptr: AlignedAllocFn,
     aligned_free_fn_ptr: AlignedFreeFn,
     realloc_fn_ptr: ReallocFn,
@@ -78,20 +73,26 @@ pub unsafe extern "C" fn set_allocator(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn set_panic_handler(panic_handler_fn_ptr: PanicHandlerFn) {
+pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_setPanicHandler(
+    _: *mut JEnv,
+    _: *mut JClass,
+    panic_handler_fn_ptr: PanicHandlerFn,
+) {
     if cfg!(feature = "panic_handler") {
         panic::set_panic_handler(panic_handler_fn_ptr);
     }
 }
 
 #[no_mangle]
-pub extern "C" fn graph_create(
-    render_distance: Jbyte,
-    world_bottom_section_y: Jbyte,
-    world_top_section_y: Jbyte,
+pub extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphCreate(
+    _: *mut JEnv,
+    _: *mut JClass,
+    render_distance: u8,
+    world_bottom_section_y: i8,
+    world_top_section_y: i8,
 ) -> *mut Graph {
     let graph = Box::new(Graph::new(
-        render_distance as u8,
+        render_distance,
         world_bottom_section_y,
         world_top_section_y,
     ));
@@ -100,18 +101,20 @@ pub extern "C" fn graph_create(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn graph_set_section(
-    graph: *mut Graph,
-    x: Jint,
-    y: Jint,
-    z: Jint,
-    opaque_blocks: *const FFISectionOpaqueBlocks,
+pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSetSection(
+    _: *mut JEnv,
+    _: *mut JClass,
+    graph_ptr: *mut Graph,
+    x: i32,
+    y: i32,
+    z: i32,
+    opaque_blocks_ptr: *const FFISectionOpaqueBlocks,
 ) {
-    let graph = graph
+    let graph = graph_ptr
         .as_mut()
         .expect("expected pointer to graph to be valid");
 
-    let opaque_blocks = opaque_blocks
+    let opaque_blocks = opaque_blocks_ptr
         .as_ref()
         .expect("expected pointer to opaque blocks to be valid");
 
@@ -119,8 +122,15 @@ pub unsafe extern "C" fn graph_set_section(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn graph_remove_section(graph: *mut Graph, x: Jint, y: Jint, z: Jint) {
-    let graph = graph
+pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphRemoveSection(
+    _: *mut JEnv,
+    _: *mut JClass,
+    graph_ptr: *mut Graph,
+    x: i32,
+    y: i32,
+    z: i32,
+) {
+    let graph = graph_ptr
         .as_mut()
         .expect("expected pointer to graph to be valid");
 
@@ -128,18 +138,20 @@ pub unsafe extern "C" fn graph_remove_section(graph: *mut Graph, x: Jint, y: Jin
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn graph_search(
-    return_value: *mut FFISlice<FFIVisibleSectionsTile>,
-    graph: *mut Graph,
-    camera: *const FFICamera,
-    search_distance: Jfloat,
-    use_occlusion_culling: Jboolean,
+pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSearch(
+    _: *mut JEnv,
+    _: *mut JClass,
+    return_value_ptr: *mut FFISlice<FFIVisibleSectionsTile>,
+    graph_ptr: *mut Graph,
+    camera_ptr: *const FFICamera,
+    search_distance: f32,
+    use_occlusion_culling: bool,
 ) {
-    let graph = graph
+    let graph = graph_ptr
         .as_mut()
         .expect("expected pointer to graph to be valid");
 
-    let camera = camera
+    let camera = camera_ptr
         .as_ref()
         .expect("expected pointer to camera to be valid");
 
@@ -161,12 +173,16 @@ pub unsafe extern "C" fn graph_search(
 
     graph.cull(&context);
 
-    *return_value = graph.visible_tiles.as_slice().into();
+    *return_value_ptr = graph.visible_tiles.as_slice().into();
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn graph_delete(graph: *mut Graph) {
-    let graph = graph
+pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphDelete(
+    _: *mut JEnv,
+    _: *mut JClass,
+    graph_ptr: *mut Graph,
+) {
+    let graph = graph_ptr
         .as_mut()
         .expect("expected pointer to graph to be valid");
 
