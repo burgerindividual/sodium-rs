@@ -77,18 +77,7 @@
     - make fully packed?
     - dealing with levels?
 
-[ ] Traversal data to section visibility data
-    - okay so new plan:
-        downscale each time without fail, refactor for this case including removing "children to downscale" or whatever.
-        at the end, we have a bunch of level 4 tiles. take the traversal data, shift in each direction independently and
-        OR them together, then AND them with the inverse of the opaque data. this is our "visible sections". in our case,
-        you may now count them or whatever. this means the "results" struct and file gets nuked
-
-        THIS MAY GIVE A DECENT COUNT, but you actually need to AND with the **possibly visible sections**. because of this,
-        we return to java the OR'd shifts, and let java choose if they're actually visible or not. return SectionTileArray
-
-        hmm, maybe not all 6 directions? need to do something similar to the normal traversal step... should likely be 
-        processed by smaller nodes and upscaled too
+[x] Traversal data to section visibility data
 
 [ ] Operation Javacide
 

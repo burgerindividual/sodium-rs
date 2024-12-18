@@ -1,5 +1,5 @@
 [package]
-name = "sodium_core"
+name = "native-cull"
 version = "0.1.0"
 edition = "2021"
 
