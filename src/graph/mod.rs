@@ -280,8 +280,8 @@ impl Graph {
                 direction_masks,
             );
 
-            // self.results.set_tile(coords, level, traversed_nodes,
-            // !children_to_traverse);
+            // a dedicated set function, if the visible nodes were to be
+            // refactored, should be called here
         }
 
         // this should always be false for level 0 tiles

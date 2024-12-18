@@ -8,29 +8,35 @@ crate-type = ["cdylib"]
 
 [profile.dev]
 opt-level = 0
-panic = "abort"
+panic = "unwind"
 lto = "thin"
 debug-assertions = true
 
 [profile.test]
 inherits = "dev"
 
-[profile.release]
-panic = "unwind"
-debug = true
+[profile.devfast]
+inherits = "dev"
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 
-[profile.asm]
-inherits = "release"
-lto = "off"
-
-[profile.production]
-inherits = "release"
+[profile.release]
 panic = "abort"
 lto = "fat"
-debug = false
+codegen-units = 1
 strip = "debuginfo"
+
+# [profile.asm]
+# inherits = "release"
+# strip = false
+# debug = true
+# lto = "off"
+
+[profile.minsize]
+inherits = "release"
+opt-level = "s"
+strip = "symbols"
 
 [dependencies]
 # Using these dependencies directly gives us access to setting features.
