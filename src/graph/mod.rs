@@ -38,7 +38,6 @@ pub struct Graph {
     pub coord_space: GraphCoordSpace,
     pub render_distance: u8,
 
-    // TODO: include references to visible section arrays
     pub visible_tiles: Vec<FFIVisibleSectionsTile>,
 }
 
@@ -237,12 +236,7 @@ impl Graph {
 
         // try to quickly determine whether we need to actually traverse the tile using
         // the frustum, fog, etc
-        // TODO: do the height test unconditionally?
-        let test_result = if level >= Self::EARLY_CHECKS_LOWEST_LEVEL {
-            context.test_tile(&self.coord_space, coords, level, parent_test_results)
-        } else {
-            CombinedTestResults::ALL_INSIDE
-        };
+        let test_result = context.test_tile(&self.coord_space, coords, level, parent_test_results);
 
         let tile = self.get_tile_mut(index, level);
 

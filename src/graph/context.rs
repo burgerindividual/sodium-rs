@@ -98,7 +98,9 @@ impl GraphSearchContext {
 
         let mut results = CombinedTestResults::ALL_INSIDE;
 
-        if parent_test_results.is_partial::<{ CombinedTestResults::FRUSTUM_BIT }>() {
+        if level >= Graph::EARLY_CHECKS_LOWEST_LEVEL
+            && parent_test_results.is_partial::<{ CombinedTestResults::FRUSTUM_BIT }>()
+        {
             self.frustum.test_box(relative_bounds, &mut results);
 
             if results == CombinedTestResults::OUTSIDE {
@@ -107,7 +109,9 @@ impl GraphSearchContext {
             }
         }
 
-        if parent_test_results.is_partial::<{ CombinedTestResults::FOG_BIT }>() {
+        if level >= Graph::EARLY_CHECKS_LOWEST_LEVEL
+            && parent_test_results.is_partial::<{ CombinedTestResults::FOG_BIT }>()
+        {
             self.bounds_inside_fog(relative_bounds, &mut results);
 
             if results == CombinedTestResults::OUTSIDE {

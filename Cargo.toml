@@ -49,3 +49,4 @@ rand = "0.8.5"
 [features]
 default = ["panic_handler"]
 panic_handler = []
+backtrace = []

@@ -12,9 +12,19 @@ pub fn set_panic_handler(panic_handler_fn_ptr: PanicHandlerFn) {
 }
 
 fn panic_hook(info: &PanicHookInfo) {
-    let mut buffer = [0_u8; 1000];
+    let mut buffer = [0_u8; 5000];
     let mut cursor = Cursor::new(buffer.as_mut());
-    let _ = writeln!(cursor, "{info}"); // we can't panic if this fails
+    let _ = write!(cursor, "{info}"); // we can't panic if this fails
+
+    #[cfg(feature = "backtrace")]
+    {
+        let _ = write!(
+            cursor,
+            "\nBacktrace:\n{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+    }
+
     let length = cursor.position();
 
     // we can't really do anything if the panic handler function isn't populated

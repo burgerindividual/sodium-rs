@@ -7,8 +7,9 @@ use tile::NodeStorage;
 
 use crate::graph::*;
 use crate::math::*;
-use crate::mem::LibcAllocVtable;
+use crate::mem::*;
 use crate::panic::PanicHandlerFn;
+use crate::{mem, panic};
 
 pub type Jbyte = i8;
 pub type Jshort = i16;
@@ -62,18 +63,24 @@ impl FFIVisibleSectionsTile {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn set_allocator(vtable: *const LibcAllocVtable) -> bool {
-    if let Some(&vtable) = vtable.as_ref() {
-        crate::mem::set_allocator(vtable)
-    } else {
-        true
-    }
+pub unsafe extern "C" fn set_allocator(
+    aligned_alloc_fn_ptr: AlignedAllocFn,
+    aligned_free_fn_ptr: AlignedFreeFn,
+    realloc_fn_ptr: ReallocFn,
+    calloc_fn_ptr: CallocFn,
+) {
+    mem::set_allocator(LibcAllocVtable {
+        aligned_alloc_fn_ptr,
+        aligned_free_fn_ptr,
+        realloc_fn_ptr,
+        calloc_fn_ptr,
+    });
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn set_panic_handler(panic_handler_fn_ptr: PanicHandlerFn) {
     if cfg!(feature = "panic_handler") {
-        crate::panic::set_panic_handler(panic_handler_fn_ptr);
+        panic::set_panic_handler(panic_handler_fn_ptr);
     }
 }
 
@@ -162,7 +169,7 @@ pub unsafe extern "C" fn graph_delete(graph: *mut Graph) {
     let graph = graph
         .as_mut()
         .expect("expected pointer to graph to be valid");
-    
+
     let graph_box = Box::from_raw(graph);
     drop(graph_box);
 }
