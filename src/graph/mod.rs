@@ -85,7 +85,7 @@ impl Graph {
                 world_top_section_y,
             ),
             render_distance,
-            visible_tiles: Vec::with_capacity(100), // probably not a bad start
+            visible_tiles: Vec::with_capacity(128), // probably not a bad start
         }
     }
 
@@ -210,10 +210,13 @@ impl Graph {
         );
 
         let tile = self.get_tile(index, Self::HIGHEST_LEVEL);
-        self.visible_tiles.push(FFIVisibleSectionsTile::new(
-            &raw const tile.visible_nodes,
-            coords,
-        ));
+
+        if tile.visible_nodes != NodeStorage::EMPTY {
+            self.visible_tiles.push(FFIVisibleSectionsTile::new(
+                &raw const tile.visible_nodes,
+                coords,
+            ));
+        }
     }
 
     fn process_tile<const INCOMING_DIRECTIONS: u8, const TRAVERSAL_DIRECTIONS: u8>(
