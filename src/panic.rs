@@ -2,9 +2,7 @@ use std::io::{Cursor, Write};
 use std::panic::{self, PanicHookInfo};
 use std::sync::OnceLock;
 
-use crate::java::JPtr;
-
-pub type PanicHandlerFn = extern "C" fn(data: JPtr<u8>, len: i32) -> !;
+pub type PanicHandlerFn = extern "C" fn(data: *const u8, len: i32) -> !;
 
 static EXTERNAL_PANIC_HANDLER: OnceLock<PanicHandlerFn> = OnceLock::new();
 
@@ -21,6 +19,6 @@ fn panic_hook(info: &PanicHookInfo) {
 
     // we can't really do anything if the panic handler function isn't populated
     if let Some(panic_handler_fn) = EXTERNAL_PANIC_HANDLER.get() {
-        panic_handler_fn(buffer.as_ptr().into(), length as i32);
+        panic_handler_fn(buffer.as_ptr(), length as i32);
     }
 }

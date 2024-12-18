@@ -6,7 +6,6 @@
 mod bitset;
 mod ffi;
 mod graph;
-mod java;
 mod math;
 mod mem;
 #[macro_use]
