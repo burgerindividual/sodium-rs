@@ -32,8 +32,9 @@ macro_rules! iterate_dirs {
     }};
 }
 
-// NOTE: this structure is NOT THREAD SAFE on its own. you must manually do synchronization
-// if you will be accessing this structure from multiple threads.
+// NOTE: this structure is NOT THREAD SAFE on its own. you must manually do
+// synchronization if you will be accessing this structure from multiple
+// threads.
 pub struct Graph {
     tile_levels: [Box<[Tile]>; 5],
 
@@ -228,8 +229,6 @@ impl Graph {
         level: u8,
         parent_test_results: CombinedTestResults,
     ) {
-        println!("Current Tile - Coords: {:?} Index: {:?}", coords.0, index.0);
-
         // tile needs to be re-borrowed multiple times in this method, due to borrow
         // checker rules. these should get optimized out.
         let tile = self.get_tile_mut(index, level);
