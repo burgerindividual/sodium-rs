@@ -28,7 +28,7 @@ impl GraphCoordSpace {
         // LocalTileIndex, as long as we're not doing any unpacking.
         let bit_counts = u8x3::from_xyz(x_bits, y_bits, z_bits).cast::<u16>();
 
-        let mut indexer = Self {
+        let mut coord_space = Self {
             // setting the top bit to 1 results in 0 being placed in a dynamic shuffle
             morton_swizzle_pattern: u8x32::splat(0b10000000),
             morton_bitmasks: u8x32::splat(0),
@@ -54,31 +54,32 @@ impl GraphCoordSpace {
             assert!(idx < 32, "Total index bits exceeds 32");
 
             if z_bits != 0 {
-                indexer.morton_swizzle_pattern[idx as usize] = if cur_z_bit < 8 { 4 } else { 5 };
-                indexer.morton_bitmasks[idx as usize] = 1 << (cur_z_bit & 0b111);
+                // choose the first or second u8 of the u16 to sample
+                coord_space.morton_swizzle_pattern[idx as usize] = if cur_z_bit < 8 { 4 } else { 5 };
+                coord_space.morton_bitmasks[idx as usize] = 1 << (cur_z_bit & 0b111);
                 idx += 1;
                 cur_z_bit += 1;
                 z_bits -= 1;
             }
 
             if y_bits != 0 {
-                indexer.morton_swizzle_pattern[idx as usize] = if cur_y_bit < 8 { 2 } else { 3 };
-                indexer.morton_bitmasks[idx as usize] = 1 << (cur_y_bit & 0b111);
+                coord_space.morton_swizzle_pattern[idx as usize] = if cur_y_bit < 8 { 2 } else { 3 };
+                coord_space.morton_bitmasks[idx as usize] = 1 << (cur_y_bit & 0b111);
                 idx += 1;
                 cur_y_bit += 1;
                 y_bits -= 1;
             }
 
             if x_bits != 0 {
-                indexer.morton_swizzle_pattern[idx as usize] = if cur_x_bit < 8 { 0 } else { 1 };
-                indexer.morton_bitmasks[idx as usize] = 1 << (cur_x_bit & 0b111);
+                coord_space.morton_swizzle_pattern[idx as usize] = if cur_x_bit < 8 { 0 } else { 1 };
+                coord_space.morton_bitmasks[idx as usize] = 1 << (cur_x_bit & 0b111);
                 idx += 1;
                 cur_x_bit += 1;
                 x_bits -= 1;
             }
         }
 
-        indexer
+        coord_space
     }
 
     pub fn pack_index(&self, coords: LocalTileCoords) -> LocalTileIndex {

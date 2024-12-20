@@ -32,6 +32,8 @@ macro_rules! iterate_dirs {
     }};
 }
 
+// NOTE: this structure is NOT THREAD SAFE on its own. you must manually do synchronization
+// if you will be accessing this structure from multiple threads.
 pub struct Graph {
     tile_levels: [Box<[Tile]>; 5],
 
@@ -164,8 +166,8 @@ impl Graph {
             CombinedTestResults,
         ),
     ) {
-        let direction = direction::take_one(&mut iter_directions);
-        let steps = context.direction_step_counts[direction::to_index(direction) as usize];
+        let direction = take_one(&mut iter_directions);
+        let steps = context.direction_step_counts[to_index(direction) as usize];
         let mut coords = start_coords;
 
         for _ in 0..steps {
@@ -178,7 +180,7 @@ impl Graph {
             if iter_directions != 0 {
                 self.iterate_dirs_recursive(context, coords, iter_directions, inner_process_fn);
             } else {
-                let index = self.coord_space.pack_index(start_coords);
+                let index = self.coord_space.pack_index(coords);
 
                 self.process_upper_tile(context, index, coords, inner_process_fn);
             }
@@ -226,6 +228,8 @@ impl Graph {
         level: u8,
         parent_test_results: CombinedTestResults,
     ) {
+        println!("Current Tile - Coords: {:?} Index: {:?}", coords.0, index.0);
+
         // tile needs to be re-borrowed multiple times in this method, due to borrow
         // checker rules. these should get optimized out.
         let tile = self.get_tile_mut(index, level);
@@ -320,20 +324,20 @@ impl Graph {
         if bitset::contains(INCOMING_DIRECTIONS, NEG_X) {
             combined_edge_data |= self.get_incoming_edge::<{ NEG_X }>(coords, level);
         }
-        if bitset::contains(INCOMING_DIRECTIONS, direction::NEG_Y) {
-            combined_edge_data |= self.get_incoming_edge::<{ direction::NEG_Y }>(coords, level);
+        if bitset::contains(INCOMING_DIRECTIONS, NEG_Y) {
+            combined_edge_data |= self.get_incoming_edge::<{ NEG_Y }>(coords, level);
         }
-        if bitset::contains(INCOMING_DIRECTIONS, direction::NEG_Z) {
-            combined_edge_data |= self.get_incoming_edge::<{ direction::NEG_Z }>(coords, level);
+        if bitset::contains(INCOMING_DIRECTIONS, NEG_Z) {
+            combined_edge_data |= self.get_incoming_edge::<{ NEG_Z }>(coords, level);
         }
-        if bitset::contains(INCOMING_DIRECTIONS, direction::POS_X) {
-            combined_edge_data |= self.get_incoming_edge::<{ direction::POS_X }>(coords, level);
+        if bitset::contains(INCOMING_DIRECTIONS, POS_X) {
+            combined_edge_data |= self.get_incoming_edge::<{ POS_X }>(coords, level);
         }
-        if bitset::contains(INCOMING_DIRECTIONS, direction::POS_Y) {
-            combined_edge_data |= self.get_incoming_edge::<{ direction::POS_Y }>(coords, level);
+        if bitset::contains(INCOMING_DIRECTIONS, POS_Y) {
+            combined_edge_data |= self.get_incoming_edge::<{ POS_Y }>(coords, level);
         }
-        if bitset::contains(INCOMING_DIRECTIONS, direction::POS_Z) {
-            combined_edge_data |= self.get_incoming_edge::<{ direction::POS_Z }>(coords, level);
+        if bitset::contains(INCOMING_DIRECTIONS, POS_Z) {
+            combined_edge_data |= self.get_incoming_edge::<{ POS_Z }>(coords, level);
         }
 
         combined_edge_data
@@ -378,11 +382,11 @@ impl Graph {
 
         let edge_mask = match DIRECTION {
             NEG_X => 0b00001111,
-            direction::NEG_Y => 0b00110011,
-            direction::NEG_Z => 0b01010101,
-            direction::POS_X => 0b11110000,
-            direction::POS_Y => 0b11001100,
-            direction::POS_Z => 0b10101010,
+            NEG_Y => 0b00110011,
+            NEG_Z => 0b01010101,
+            POS_X => 0b11110000,
+            POS_Y => 0b11001100,
+            POS_Z => 0b10101010,
             _ => unsafe { unreachable_unchecked() },
         };
 
@@ -465,7 +469,6 @@ impl Graph {
 
     // TODO: should this reset the traversal status of the nodes it affects? that'll
     // get reset anyway, right?
-    // NOTE: not thread safe, make sure
     pub fn set_section(&mut self, section_coords: i32x3, opaque_block_bytes: &[u8; 512]) {
         let level_1_coords = self.coord_space.section_to_local_coords(section_coords);
         let level_1_index = self.coord_space.pack_index(level_1_coords);

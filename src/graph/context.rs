@@ -51,23 +51,30 @@ impl GraphSearchContext {
         let iter_start_pos = camera_pos_int >> Simd::splat(7);
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
-        let level_4_tile_bitmask = coord_space.coords_bitmask(4);
         let positive_step_counts = unsafe {
-            (((camera_pos + Simd::splat(search_distance)).to_int_unchecked::<u16>()
+            ((camera_pos + Simd::splat(search_distance)).to_int_unchecked::<u16>()
                 >> Simd::splat(7))
-                & level_4_tile_bitmask)
                 - iter_start_pos
         };
         // we cast from f32 to i16 to u16 here. this is to allow underflowing, as we
         // want an underflow to
         let negative_step_counts = unsafe {
             iter_start_pos
-                - (((camera_pos - Simd::splat(search_distance))
-                    .to_int_unchecked::<i16>()
-                    .cast::<u16>()
+                - ((camera_pos - Simd::splat(search_distance)).to_int_unchecked::<i16>()
                     >> Simd::splat(7))
-                    & level_4_tile_bitmask)
+                .cast::<u16>()
         };
+
+        // TODO: remove this check
+        let level_4_tile_bitmask = coord_space.coords_bitmask(4);
+        assert_eq!(
+            positive_step_counts,
+            positive_step_counts & level_4_tile_bitmask
+        );
+        assert_eq!(
+            negative_step_counts,
+            negative_step_counts & level_4_tile_bitmask
+        );
 
         let direction_step_counts = simd_swizzle!(
             negative_step_counts.cast::<u8>(),
@@ -87,6 +94,8 @@ impl GraphSearchContext {
         }
     }
 
+    #[no_mangle]
+    #[inline(never)]
     pub fn test_tile(
         &self,
         coord_space: &GraphCoordSpace,
@@ -94,13 +103,16 @@ impl GraphSearchContext {
         level: u8,
         parent_test_results: CombinedTestResults,
     ) -> CombinedTestResults {
-        let relative_bounds = self.tile_get_relative_bounds(coords, level);
+        let mut lazy_relative_bounds = Option::None;
 
         let mut results = CombinedTestResults::ALL_INSIDE;
 
         if level >= Graph::EARLY_CHECKS_LOWEST_LEVEL
             && parent_test_results.is_partial::<{ CombinedTestResults::FRUSTUM_BIT }>()
         {
+            let relative_bounds = *lazy_relative_bounds
+                .get_or_insert_with(|| self.tile_get_relative_bounds(coords, level));
+
             self.frustum.test_box(relative_bounds, &mut results);
 
             if results == CombinedTestResults::OUTSIDE {
@@ -112,6 +124,9 @@ impl GraphSearchContext {
         if level >= Graph::EARLY_CHECKS_LOWEST_LEVEL
             && parent_test_results.is_partial::<{ CombinedTestResults::FOG_BIT }>()
         {
+            let relative_bounds = *lazy_relative_bounds
+                .get_or_insert_with(|| self.tile_get_relative_bounds(coords, level));
+
             self.bounds_inside_fog(relative_bounds, &mut results);
 
             if results == CombinedTestResults::OUTSIDE {
