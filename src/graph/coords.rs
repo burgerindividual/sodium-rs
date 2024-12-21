@@ -55,7 +55,8 @@ impl GraphCoordSpace {
 
             if z_bits != 0 {
                 // choose the first or second u8 of the u16 to sample
-                coord_space.morton_swizzle_pattern[idx as usize] = if cur_z_bit < 8 { 4 } else { 5 };
+                coord_space.morton_swizzle_pattern[idx as usize] =
+                    if cur_z_bit < 8 { 4 } else { 5 };
                 coord_space.morton_bitmasks[idx as usize] = 1 << (cur_z_bit & 0b111);
                 idx += 1;
                 cur_z_bit += 1;
@@ -63,7 +64,8 @@ impl GraphCoordSpace {
             }
 
             if y_bits != 0 {
-                coord_space.morton_swizzle_pattern[idx as usize] = if cur_y_bit < 8 { 2 } else { 3 };
+                coord_space.morton_swizzle_pattern[idx as usize] =
+                    if cur_y_bit < 8 { 2 } else { 3 };
                 coord_space.morton_bitmasks[idx as usize] = 1 << (cur_y_bit & 0b111);
                 idx += 1;
                 cur_y_bit += 1;
@@ -71,7 +73,8 @@ impl GraphCoordSpace {
             }
 
             if x_bits != 0 {
-                coord_space.morton_swizzle_pattern[idx as usize] = if cur_x_bit < 8 { 0 } else { 1 };
+                coord_space.morton_swizzle_pattern[idx as usize] =
+                    if cur_x_bit < 8 { 0 } else { 1 };
                 coord_space.morton_bitmasks[idx as usize] = 1 << (cur_x_bit & 0b111);
                 idx += 1;
                 cur_x_bit += 1;
@@ -165,7 +168,9 @@ impl GraphCoordSpace {
     }
 
     pub fn coords_bitmask(&self, level: u8) -> u16x3 {
-        unsafe { assert_unchecked(level <= Graph::HIGHEST_LEVEL) }
+        unsafe {
+            assert_unchecked(level <= Graph::HIGHEST_LEVEL);
+        }
         self.level_0_tile_bitmask >> Simd::splat(level as u16)
     }
 
@@ -246,7 +251,7 @@ impl LocalTileIndex {
         self.0 as usize
     }
 
-    pub fn child_number(self) -> u8 {
+    pub fn child_octant(self) -> u8 {
         self.0 as u8 & 0b111
     }
 
@@ -276,10 +281,10 @@ impl Iterator for UnorderedChildIter {
         // Description of the iteration approach on daniel lemire's blog
         // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
         if self.children_present != 0 {
-            let child_number = self.children_present.trailing_zeros();
+            let child_octant = self.children_present.trailing_zeros();
             self.children_present &= self.children_present - 1;
-            let child_index = LocalTileIndex(self.parent_index_high_bits | child_number);
-            Some((child_index, child_number as u8))
+            let child_index = LocalTileIndex(self.parent_index_high_bits | child_octant);
+            Some((child_index, child_octant as u8))
         } else {
             None
         }
@@ -353,13 +358,13 @@ impl Iterator for SortedChildIterator {
         // Description of the iteration approach on daniel lemire's blog
         // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
         if self.children_present != 0 {
-            let child_number = self.children_present.trailing_zeros();
+            let child_octant = self.children_present.trailing_zeros();
 
-            let child_index_low_bits = (self.children_index_low_bits >> (child_number * 4)) & 0b111;
+            let child_index_low_bits = (self.children_index_low_bits >> (child_octant * 4)) & 0b111;
             let child_index = LocalTileIndex(self.parent_index_high_bits | child_index_low_bits);
 
             let child_coords_low_bits = (self.children_coords_low_bits
-                >> Simd::splat(child_number as u16))
+                >> Simd::splat(child_octant as u16))
                 & Simd::splat(0b1);
             let child_coords =
                 LocalTileCoords(self.parent_coords_high_bits | child_coords_low_bits);

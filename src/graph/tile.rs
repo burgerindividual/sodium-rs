@@ -18,9 +18,8 @@ impl NodeStorage {
     pub const EMPTY: Self = Self(Simd::splat(0));
     pub const FILLED: Self = Self(Simd::splat(0xFF));
 
-    const CHILD_TRAVERSE_THRESHOLD: f32 = 0.8;
+    const CHILD_TRAVERSE_THRESHOLD: f32 = 0.85;
 
-    #[cfg(test)]
     pub fn index(x: u8, y: u8, z: u8) -> u16 {
         debug_assert!(x < 8);
         debug_assert!(y < 8);
@@ -29,7 +28,6 @@ impl NodeStorage {
         ((z as u16) << 6) | ((y as u16) << 3) | (x as u16)
     }
 
-    #[cfg(test)]
     pub fn get_bit(&self, index: u16) -> bool {
         let array_idx = index >> 3;
         let bit_idx = index & 0b111;
@@ -38,7 +36,6 @@ impl NodeStorage {
         ((byte >> bit_idx) & 0b1) != 0
     }
 
-    #[cfg(test)]
     pub fn put_bit(&mut self, index: u16, value: bool) {
         let array_idx = index >> 3;
         let bit_idx = index & 0b111;
@@ -94,14 +91,17 @@ impl NodeStorage {
             ]
         );
 
-        let masked_pairs =
-            (first_pair_nodes & second_pair_nodes & third_pair_nodes & fourth_pair_nodes)
-                | src_pairs_mask;
         let set_cubes = if OPAQUE {
             // downscaling opaque blocks
+            let masked_pairs =
+                (first_pair_nodes & second_pair_nodes & third_pair_nodes & fourth_pair_nodes)
+                    | src_pairs_mask;
             masked_pairs.simd_eq(u8x64::splat(0b11111111))
         } else {
             // downscaling traversal data
+            let masked_pairs =
+                (first_pair_nodes | second_pair_nodes | third_pair_nodes | fourth_pair_nodes)
+                    & !src_pairs_mask;
             masked_pairs.simd_ne(u8x64::splat(0b00000000))
         }
         .to_bitmask();
@@ -110,8 +110,12 @@ impl NodeStorage {
         let dst_x_shift = dst_octant & 0b100;
 
         let nibbles_1 = set_cubes << dst_x_shift;
-        let nibbles_2 = set_cubes >> (dst_x_shift ^ 0b100);
+        // dst_x_shift can either be 0 or 4. this XOR will toggle the shift amount to
+        // the opposite of whatever dst_x_shift is.
+        let dst_x_shift_opposite = dst_x_shift ^ 0b100;
+        let nibbles_2 = set_cubes >> dst_x_shift_opposite;
 
+        // TODO: what the fuck am i looking at
         let shuffled_bytes = simd_swizzle!(
             u8x8::from_array(nibbles_1.to_le_bytes()),
             u8x8::from_array(nibbles_2.to_le_bytes()),
@@ -155,7 +159,9 @@ impl NodeStorage {
             let original_population = src.population();
             let downscaled_population = set_cubes.count_ones() as u8;
 
-            (original_population as f32 / downscaled_population as f32)
+            // we offset the numerator by 1 so this can sometimes pass when
+            // downscaled_population is 0
+            ((downscaled_population + 1) as f32 / original_population as f32)
                 < (Self::CHILD_TRAVERSE_THRESHOLD / 8.0)
         } else {
             true
@@ -483,14 +489,16 @@ impl NodeStorage {
 // the resolution on each axis
 #[derive(Debug)]
 pub struct Tile {
-    pub traversed_nodes: NodeStorage,
-    pub visible_nodes: NodeStorage,
+    // TODO: store traversable nodes instead?
     pub opaque_nodes: NodeStorage,
     // There are 8 possible child nodes, each bit represents a child.
     // Indices are formatted as XYZ.
     // Not necessary on level 0, possibly remove this?
     pub children_to_traverse: u8,
+
     pub traversal_status: TraversalStatus,
+    pub traversed_nodes: NodeStorage,
+    pub visible_nodes: NodeStorage,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -512,7 +520,7 @@ impl Default for Tile {
             traversed_nodes: NodeStorage::EMPTY,
             visible_nodes: NodeStorage::EMPTY,
             // visibility fully blocked by default
-            opaque_nodes: NodeStorage::FILLED,
+            opaque_nodes: NodeStorage::EMPTY,
             children_to_traverse: 0,
             traversal_status: TraversalStatus::Uninitialized,
         }
@@ -520,7 +528,11 @@ impl Default for Tile {
 }
 
 impl Tile {
-    pub fn set_empty_traversal(&mut self) {
+    pub fn is_empty(&self) -> bool {
+        self.traversed_nodes == NodeStorage::EMPTY
+    }
+
+    pub fn set_empty(&mut self) {
         self.traversed_nodes = NodeStorage::EMPTY;
         self.visible_nodes = NodeStorage::EMPTY;
     }
@@ -553,7 +565,7 @@ impl Tile {
         let neg_z_mask = direction_masks[to_index(NEG_Z) as usize];
         let pos_z_mask = direction_masks[to_index(POS_Z) as usize];
 
-        let opaque_nodes = self.opaque_nodes.0;
+        let traversable_nodes = !self.opaque_nodes.0;
 
         // if TRAVERSAL_DIRECTIONS.count_ones() == 3 {
         // TODO OPT: fast path for air in octants: if opaque is all 0s, and the corner
@@ -562,12 +574,12 @@ impl Tile {
 
         // the traversal masks always are used, and are combined prior to traversal with
         // the opaque nodes mask.
-        let mut neg_x_combined_mask = opaque_nodes;
-        let mut neg_y_combined_mask = opaque_nodes;
-        let mut neg_z_combined_mask = opaque_nodes;
-        let mut pos_x_combined_mask = opaque_nodes;
-        let mut pos_y_combined_mask = opaque_nodes;
-        let mut pos_z_combined_mask = opaque_nodes;
+        let mut neg_x_combined_mask = traversable_nodes;
+        let mut neg_y_combined_mask = traversable_nodes;
+        let mut neg_z_combined_mask = traversable_nodes;
+        let mut pos_x_combined_mask = traversable_nodes;
+        let mut pos_y_combined_mask = traversable_nodes;
+        let mut pos_z_combined_mask = traversable_nodes;
 
         // we need to add direction-specific masks when there are pairs of opposing
         // directions

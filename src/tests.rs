@@ -83,17 +83,18 @@ fn downscale_tile() {
 
             let dst_node_storage_original = dst_node_storage_modified;
 
-            dst_node_storage_modified.downscale_to_octant::<true>(src_node_storage, dst_octant);
+            dst_node_storage_modified.downscale_to_octant::<false>(src_node_storage, dst_octant);
 
             for z in 0..8 {
                 for y in 0..8 {
                     for x in 0..8 {
-                        let cur_quadrant = (x & 0b100) | ((y & 0b100) >> 1) | ((z & 0b100) >> 2);
+                        let cur_octant = (x & 0b100) | ((y & 0b100) >> 1) | ((z & 0b100) >> 2);
                         let dst_idx = NodeStorage::index(x, y, z);
                         let dst_val = dst_node_storage_modified.get_bit(dst_idx);
 
-                        if cur_quadrant == dst_octant {
-                            let mut src_val = true;
+                        if cur_octant == dst_octant {
+                            let mut src_val = false;
+                            // let mut src_val = true;
                             for z2 in 0..2 {
                                 for y2 in 0..2 {
                                     for x2 in 0..2 {
@@ -102,7 +103,8 @@ fn downscale_tile() {
                                             ((y & 0b11) * 2) + y2,
                                             ((z & 0b11) * 2) + z2,
                                         );
-                                        src_val &= src_node_storage.get_bit(src_idx);
+                                        src_val |= src_node_storage.get_bit(src_idx);
+                                        // src_val &= src_node_storage.get_bit(src_idx);
                                     }
                                 }
                             }
@@ -357,4 +359,5 @@ fn edge_move_test() {
 }
 
 // TODO: test clearing the graph, test searching traversed nodes, test axis and
-// plane masks, test coordinate stepping, test sorted child iteration
+// plane masks, test coordinate stepping, test sorted child iteration, test
+// downscale of traversal data

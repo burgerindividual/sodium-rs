@@ -1,5 +1,5 @@
 use std::array;
-use std::hint::unreachable_unchecked;
+use std::hint::{assert_unchecked, unreachable_unchecked};
 use std::num::NonZero;
 
 use context::{CombinedTestResults, GraphSearchContext};
@@ -229,6 +229,11 @@ impl Graph {
         level: u8,
         parent_test_results: CombinedTestResults,
     ) {
+        println!(
+            "Current Tile - Level {:?} Coords: {:?} Index: {:?}",
+            level, coords.0, index.0
+        );
+
         // tile needs to be re-borrowed multiple times in this method, due to borrow
         // checker rules. these should get optimized out.
         let tile = self.get_tile_mut(index, level);
@@ -245,7 +250,7 @@ impl Graph {
 
         if test_result == CombinedTestResults::OUTSIDE {
             // early exit
-            tile.set_empty_traversal();
+            tile.set_empty();
             return;
         }
 
@@ -254,16 +259,15 @@ impl Graph {
         // if all children are present, we don't have to process this tile, and we can
         // solely process the children.
         if children_to_traverse != 0b11111111 {
-            let combined_edge_data =
-                self.combine_incoming_edges::<INCOMING_DIRECTIONS>(coords, level);
+            let incoming_traversed_nodes = self
+                .get_incoming_traversed_nodes::<INCOMING_DIRECTIONS>(context, index, coords, level);
 
             let tile = self.get_tile_mut(index, level);
-            let incoming_traversed_nodes = combined_edge_data & tile.opaque_nodes.0;
 
             // FAST PATH: if we start the traversal with all 0s, we'll end with all 0s.
             if incoming_traversed_nodes == Simd::splat(0) {
                 // early exit
-                tile.set_empty_traversal();
+                tile.set_empty();
                 return;
             }
 
@@ -293,7 +297,7 @@ impl Graph {
             let child_level = level - 1;
 
             for (child_index, child_coords) in child_iter {
-                self.process_tile::<TRAVERSAL_DIRECTIONS, INCOMING_DIRECTIONS>(
+                self.process_tile::<INCOMING_DIRECTIONS, TRAVERSAL_DIRECTIONS>(
                     context,
                     child_index,
                     child_coords,
@@ -308,38 +312,72 @@ impl Graph {
 
                 let tile = self.get_tile_mut(index, level);
                 tile.visible_nodes
-                    .downscale_to_octant::<false>(child_visible_nodes, child_index.child_number());
+                    .downscale_to_octant::<false>(child_visible_nodes, child_index.child_octant());
             }
         }
     }
 
-    fn combine_incoming_edges<const INCOMING_DIRECTIONS: u8>(
+    fn get_incoming_traversed_nodes<const INCOMING_DIRECTIONS: u8>(
         &mut self,
+        context: &GraphSearchContext,
+        index: LocalTileIndex,
         coords: LocalTileCoords,
         level: u8,
     ) -> u8x64 {
-        let mut combined_edge_data = Simd::splat(0);
+        // the center tile has no incoming directions. instead, we have to place the
+        // first set node manually,
+        if INCOMING_DIRECTIONS == 0 {
+            unsafe {
+                assert_unchecked(level <= Graph::HIGHEST_LEVEL);
+            }
+            let camera_coords_in_tile = (context.camera_pos_int >> Simd::splat(level as u16))
+                .cast::<u8>()
+                & Simd::splat(0b111);
+            let camera_tile_index = NodeStorage::index(
+                camera_coords_in_tile.x(),
+                camera_coords_in_tile.y(),
+                camera_coords_in_tile.z(),
+            );
 
-        if bitset::contains(INCOMING_DIRECTIONS, NEG_X) {
-            combined_edge_data |= self.get_incoming_edge::<{ NEG_X }>(coords, level);
-        }
-        if bitset::contains(INCOMING_DIRECTIONS, NEG_Y) {
-            combined_edge_data |= self.get_incoming_edge::<{ NEG_Y }>(coords, level);
-        }
-        if bitset::contains(INCOMING_DIRECTIONS, NEG_Z) {
-            combined_edge_data |= self.get_incoming_edge::<{ NEG_Z }>(coords, level);
-        }
-        if bitset::contains(INCOMING_DIRECTIONS, POS_X) {
-            combined_edge_data |= self.get_incoming_edge::<{ POS_X }>(coords, level);
-        }
-        if bitset::contains(INCOMING_DIRECTIONS, POS_Y) {
-            combined_edge_data |= self.get_incoming_edge::<{ POS_Y }>(coords, level);
-        }
-        if bitset::contains(INCOMING_DIRECTIONS, POS_Z) {
-            combined_edge_data |= self.get_incoming_edge::<{ POS_Z }>(coords, level);
-        }
+            let mut traversed_nodes = NodeStorage::EMPTY;
+            traversed_nodes.put_bit(camera_tile_index, true);
 
-        combined_edge_data
+            // TODO: get rid of this, and find a better way to handle when the camera is
+            // inside an opaque node
+            println!(
+                "Camera inside opaque node: {}",
+                self.get_tile(index, level)
+                    .opaque_nodes
+                    .get_bit(camera_tile_index)
+            );
+
+            return traversed_nodes.0;
+        } else {
+            let mut combined_incoming_edges = Simd::splat(0);
+
+            if bitset::contains(INCOMING_DIRECTIONS, NEG_X) {
+                combined_incoming_edges |= self.get_incoming_edge::<{ NEG_X }>(coords, level);
+            }
+            if bitset::contains(INCOMING_DIRECTIONS, NEG_Y) {
+                combined_incoming_edges |= self.get_incoming_edge::<{ NEG_Y }>(coords, level);
+            }
+            if bitset::contains(INCOMING_DIRECTIONS, NEG_Z) {
+                combined_incoming_edges |= self.get_incoming_edge::<{ NEG_Z }>(coords, level);
+            }
+            if bitset::contains(INCOMING_DIRECTIONS, POS_X) {
+                combined_incoming_edges |= self.get_incoming_edge::<{ POS_X }>(coords, level);
+            }
+            if bitset::contains(INCOMING_DIRECTIONS, POS_Y) {
+                combined_incoming_edges |= self.get_incoming_edge::<{ POS_Y }>(coords, level);
+            }
+            if bitset::contains(INCOMING_DIRECTIONS, POS_Z) {
+                combined_incoming_edges |= self.get_incoming_edge::<{ POS_Z }>(coords, level);
+            }
+
+            let tile = self.get_tile(index, level);
+
+            combined_incoming_edges & !tile.opaque_nodes.0
+        }
     }
 
     fn get_incoming_edge<const DIRECTION: u8>(
@@ -379,6 +417,12 @@ impl Graph {
     ) -> NodeStorage {
         let tile = self.get_tile(index, level);
 
+        // stop downward traversal for empty nodes, the children are likely left
+        // unpopulated
+        if tile.is_empty() {
+            return NodeStorage::EMPTY;
+        }
+
         let edge_mask = match DIRECTION {
             NEG_X => 0b00001111,
             NEG_Y => 0b00110011,
@@ -404,11 +448,12 @@ impl Graph {
 
         let mut traversed_nodes_updated = tile.traversed_nodes;
         let child_level = level - 1;
-        for (child_index, child) in index.unordered_child_iter(children_to_recurse) {
+        for (child_index, child_octant) in index.unordered_child_iter(children_to_recurse) {
             let child_traversed_nodes =
                 self.get_traversed_nodes_down::<DIRECTION>(child_index, child_level);
 
-            traversed_nodes_updated.downscale_to_octant::<false>(child_traversed_nodes, child);
+            traversed_nodes_updated
+                .downscale_to_octant::<false>(child_traversed_nodes, child_octant);
         }
 
         let tile = self.get_tile_mut(index, level);
@@ -441,13 +486,13 @@ impl Graph {
 
         let tile = self.get_tile_mut(index, level);
 
-        let mut traversed_nodes = parent_traversed_nodes.upscale(index.child_number());
-        traversed_nodes.0 |= tile.opaque_nodes.0;
+        let mut upscaled_traversed_nodes = parent_traversed_nodes.upscale(index.child_octant());
+        upscaled_traversed_nodes.0 &= !tile.opaque_nodes.0;
 
-        tile.traversed_nodes = traversed_nodes;
+        tile.traversed_nodes = upscaled_traversed_nodes;
         tile.traversal_status = TraversalStatus::Downmipped;
 
-        traversed_nodes
+        upscaled_traversed_nodes
     }
 
     fn get_tile_mut(&mut self, index: LocalTileIndex, level: u8) -> &mut Tile {
@@ -506,13 +551,15 @@ impl Graph {
     ) {
         let parent_level = level + 1;
         let parent_index = index.to_parent_level();
-        let child = index.child_number();
+        let child_octant = index.child_octant();
         let parent_tile = self.get_tile_mut(parent_index, parent_level);
         let should_traverse_child = parent_tile
             .opaque_nodes
-            .downscale_to_octant::<true>(opaque_nodes, child);
-        parent_tile.children_to_traverse &= !(0b1 << child);
-        parent_tile.children_to_traverse |= (should_traverse_child as u8) << child;
+            .downscale_to_octant::<true>(opaque_nodes, child_octant);
+        // clear slot in children to traverse, then set it to the value returned by the
+        // downscale
+        parent_tile.children_to_traverse &= !(0b1 << child_octant);
+        parent_tile.children_to_traverse |= (should_traverse_child as u8) << child_octant;
 
         let parent_opaque_nodes = parent_tile.opaque_nodes;
 

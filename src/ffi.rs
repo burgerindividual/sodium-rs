@@ -147,6 +147,8 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
     search_distance: f32,
     use_occlusion_culling: bool,
 ) {
+    println!("start search ----------");
+
     let graph = graph_ptr
         .as_mut()
         .expect("expected pointer to graph to be valid");
