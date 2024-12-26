@@ -149,8 +149,9 @@ impl NodeStorage {
 
         let downscaled_population = set_cubes.count_ones() as u8;
 
-        // this covers the divide-by-0 case
-        if downscaled_population <= 0 {
+        // this covers the divide-by-0 case, because downscaled_population can only be 0
+        // when original_population is 0
+        if downscaled_population == 0 {
             true
         } else {
             let original_population = src.population() as u16;
