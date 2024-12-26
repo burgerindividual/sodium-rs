@@ -79,9 +79,11 @@
 
 [x] Traversal data to section visibility data
 
-[ ] Operation Javacide
+[x] Rewrite to use runtime direction sets
 
-[ ] Write more tests
+[-] Operation Javacide
+
+[-] Write more tests
 
 LATER:
 
@@ -104,3 +106,7 @@ LATER:
 [ ] Make "use occlusion culling" actually work for disabling in spectator mode
 
 [ ] Extensive documentation of the base bfs algorithm, the graph and tile representations, and individual methods
+
+[ ] Re-introduce const generic directions
+    - option 1: have lists for different direction combinations, add children to these lists and iterate
+    - option 2: have const generic "guaranteed directions" and runtime "possible directions"

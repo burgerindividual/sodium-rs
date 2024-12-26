@@ -1,6 +1,7 @@
 // Directions and Direction Sets are represented as raw u8s to work seamlessly
 // with the current state of const generics.
 
+use std::hint::unreachable_unchecked;
 use std::num::NonZero;
 
 pub const NEG_X: u8 = 0b000001;
@@ -25,7 +26,7 @@ pub const fn opposite(direction_set: u8) -> u8 {
 }
 
 /// Removes a direction from the direction set, and returns it
-pub const fn take_one(direction_set: &mut u8) -> u8 {
+pub const fn take_any(direction_set: &mut u8) -> u8 {
     let prev_set = *direction_set;
 
     // removes the lowest bit in the bit set
@@ -34,4 +35,16 @@ pub const fn take_one(direction_set: &mut u8) -> u8 {
     // the difference between the old set and the new set is the removed bit.
     // we return that bit.
     *direction_set ^ prev_set
+}
+
+pub const fn to_str(direction: u8) -> &'static str {
+    match direction {
+        POS_X => "+X",
+        POS_Y => "+Y",
+        POS_Z => "+Z",
+        NEG_X => "-X",
+        NEG_Y => "-Y",
+        NEG_Z => "-Z",
+        _ => unsafe { unreachable_unchecked() },
+    }
 }

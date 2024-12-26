@@ -205,6 +205,9 @@ impl LocalTileCoords {
     }
 
     pub fn to_block_coords(self, level: u8) -> u16x3 {
+        unsafe {
+            assert_unchecked(level <= Graph::HIGHEST_LEVEL);
+        }
         self.0 << Simd::splat(level as u16 + 3)
     }
 
@@ -235,7 +238,7 @@ impl Coords3<u16> for LocalTileCoords {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash)]
 pub struct LocalTileIndex(pub u32);
 
 impl LocalTileIndex {
@@ -275,7 +278,7 @@ impl UnorderedChildIter {
 }
 
 impl Iterator for UnorderedChildIter {
-    type Item = (LocalTileIndex, u8);
+    type Item = LocalTileIndex;
 
     fn next(&mut self) -> Option<Self::Item> {
         // Description of the iteration approach on daniel lemire's blog
@@ -284,7 +287,7 @@ impl Iterator for UnorderedChildIter {
             let child_octant = self.children_present.trailing_zeros();
             self.children_present &= self.children_present - 1;
             let child_index = LocalTileIndex(self.parent_index_high_bits | child_octant);
-            Some((child_index, child_octant as u8))
+            Some(child_index)
         } else {
             None
         }
@@ -292,21 +295,22 @@ impl Iterator for UnorderedChildIter {
 }
 
 pub struct SortedChildIterator {
-    parent_index_high_bits: u32,
-    children_index_low_bits: u32,
-    parent_coords_high_bits: u16x3,
-    // this would fit in a u8x3, but keeping the elements as u16 makes some things faster
-    children_coords_low_bits: u16x3,
     children_present: u8,
+    sorted_child_octants: u32,
+    // this would fit in a u8x3, but keeping the elements as u16 makes some things faster
+    sorted_child_octant_coords: u16x3,
+
+    parent_index_high_bits: u32,
+    parent_coords_high_bits: u16x3,
 }
 
 impl SortedChildIterator {
     pub fn new(
         index: LocalTileIndex,
         coords: LocalTileCoords,
+        level: u8,
         camera_block_coords: u16x3,
         children_present: u8,
-        level: u8,
     ) -> Self {
         let parent_index_high_bits = index.to_child_level().0;
         let parent_coords_high_bits = coords.to_child_level().0;
@@ -315,13 +319,10 @@ impl SortedChildIterator {
             + Simd::splat(LocalTileCoords::block_length(level) as u16 / 2);
         let first_child_coords = camera_block_coords.simd_ge(middle_coords);
         // this will create an index of a child with the bit order XYZ
-        let first_child_index = first_child_coords.to_bitmask() as u32;
+        let first_child_octant = first_child_coords.to_bitmask() as u32;
 
-        // broadcast first child to 8 "lanes".
-        // we only use the bottom 3 bits of each lane, but the lane width is 4 bits to
-        // allow for faster indexing.
-        let mut children_index_low_bits =
-            first_child_index * 0b0001_0001_0001_0001_0001_0001_0001_0001;
+        // broadcast first child to 8 "lanes" of 3 buts.
+        let mut sorted_child_octants = first_child_octant * 0b001_001_001_001_001_001_001_001;
         // toggle different bits on specific axis to replicate addition or subtraction
         // in the first lane, the value is the original.
         // in the next 3 lanes, the value is moved on 1 axis.
@@ -329,10 +330,10 @@ impl SortedChildIterator {
         // in the final lane, the value is moved on 3 axes.
         // this stays sorted by manhattan distance, because each move on an axis counts
         // as 1 extra distance
-        children_index_low_bits ^= 0b0111_0101_0110_0011_0100_0010_0001_0000;
+        sorted_child_octants ^= 0b111_101_110_011_100_010_001_000;
 
         // same concept as previous, but vertical instead of horizontal
-        let children_coords_low_bits = first_child_coords.to_int().cast::<u16>()
+        let sorted_child_octant_coords = first_child_coords.to_int().cast::<u16>()
             ^ Simd::from_array([
                 // top bits need to be set to 0
                 0b11111111_11101000,
@@ -341,35 +342,43 @@ impl SortedChildIterator {
             ]);
 
         Self {
-            parent_index_high_bits,
-            children_index_low_bits,
-            parent_coords_high_bits,
-            children_coords_low_bits,
             children_present,
+            sorted_child_octants,
+            sorted_child_octant_coords,
+            parent_index_high_bits,
+            parent_coords_high_bits,
         }
     }
 }
 
 impl Iterator for SortedChildIterator {
-    // TODO: consider changing this to only iterate on coords?
+    // We return both the indices and coordinates because it's easy to calculate both at once
     type Item = (LocalTileIndex, LocalTileCoords);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Description of the iteration approach on daniel lemire's blog
-        // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
         if self.children_present != 0 {
-            let child_octant = self.children_present.trailing_zeros();
+            let mut child_found = false;
+            let mut child_octant = 0;
+            let mut child_octant_coords = Simd::splat(0);
 
-            let child_index_low_bits = (self.children_index_low_bits >> (child_octant * 4)) & 0b111;
-            let child_index = LocalTileIndex(self.parent_index_high_bits | child_index_low_bits);
+            while !child_found {
+                child_octant = self.sorted_child_octants & 0b111;
+                child_octant_coords = self.sorted_child_octant_coords & Simd::splat(0b1);
+                // pop child octant from list of octants by shifting it out of bounds
+                self.sorted_child_octants >>= 3;
+                self.sorted_child_octant_coords >>= Simd::splat(1);
 
-            let child_coords_low_bits = (self.children_coords_low_bits
-                >> Simd::splat(child_octant as u16))
-                & Simd::splat(0b1);
+                let child_mask_bit = 1 << child_octant;
+
+                child_found = self.children_present & child_mask_bit != 0;
+                // mark current child as no longer present, as we're currently iterating it.
+                // if the current child wasn't present, this does nothing.
+                self.children_present &= !child_mask_bit;
+            }
+
+            let child_index = LocalTileIndex(self.parent_index_high_bits | child_octant);
             let child_coords =
-                LocalTileCoords(self.parent_coords_high_bits | child_coords_low_bits);
-
-            self.children_present &= self.children_present - 1;
+                LocalTileCoords(self.parent_coords_high_bits | child_octant_coords);
 
             Some((child_index, child_coords))
         } else {

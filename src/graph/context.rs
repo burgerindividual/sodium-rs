@@ -11,7 +11,7 @@ pub struct GraphSearchContext {
 
     // the camera coords (in blocks) relative to the local origin, which is the (0, 0, 0) point of
     // the graph. the representation here is slightly different than the representation in
-    // CameraTransform.java, as camera_pos_frac can never be negativein our representation.
+    // CameraTransform.java, as camera_pos_frac can never be negative in our representation.
     pub camera_pos_int: u16x3,
     pub camera_pos_frac: f32x3,
 
@@ -94,8 +94,6 @@ impl GraphSearchContext {
         }
     }
 
-    #[no_mangle]
-    #[inline(never)]
     pub fn test_tile(
         &self,
         coord_space: &GraphCoordSpace,
@@ -221,6 +219,19 @@ impl GraphSearchContext {
         RelativeBoundingBox::new(pos_float, pos_float + tile_factor)
     }
 
+    pub fn get_incoming_directions(&self, coords: LocalTileCoords, level: u8) -> u8 {
+        unsafe {
+            assert_unchecked(level <= Graph::HIGHEST_LEVEL);
+        }
+        let camera_tile_coords = self.camera_pos_int >> Simd::splat(level as u16 + 3);
+        let coords_difference = coords.0.cast::<i16>() - camera_tile_coords.cast::<i16>();
+
+        let negative = coords_difference.simd_gt(Simd::splat(0));
+        let positive = coords_difference.simd_lt(Simd::splat(0));
+
+        negative.to_bitmask() as u8 | (positive.to_bitmask() << 3) as u8
+    }
+
     // TODO OPT: add douira's magic visible directions culler
     // TODO OPT: add ray culling
 }
@@ -318,9 +329,11 @@ impl LocalFrustum {
 pub struct CombinedTestResults(u8);
 
 impl CombinedTestResults {
-    pub const ALL_PARTIAL: Self = Self(0b111);
+    pub const NONE_INSIDE: Self = Self(0b111);
+    pub const HEIGHT_INSIDE: Self = Self(0b011);
     pub const ALL_INSIDE: Self = Self(0b000);
     pub const OUTSIDE: Self = Self(0xFF);
+
     pub const FRUSTUM_BIT: u8 = 0b001;
     pub const FOG_BIT: u8 = 0b010;
     pub const HEIGHT_BIT: u8 = 0b100;

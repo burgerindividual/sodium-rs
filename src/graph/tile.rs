@@ -18,7 +18,7 @@ impl NodeStorage {
     pub const EMPTY: Self = Self(Simd::splat(0));
     pub const FILLED: Self = Self(Simd::splat(0xFF));
 
-    const CHILD_TRAVERSE_THRESHOLD: f32 = 0.85;
+    const EXTRAPOLATION_THRESHOLD: f32 = 1.2;
 
     pub fn index(x: u8, y: u8, z: u8) -> u16 {
         debug_assert!(x < 8);
@@ -45,9 +45,11 @@ impl NodeStorage {
         *byte |= (value as u8) << bit_idx;
     }
 
-    pub fn downscale_to_octant<const OPAQUE: bool>(&mut self, src: Self, dst_octant: u8) -> bool {
+    // Returns whether a child node downscaled in this way should be processed. This
+    // case happens when the downscaled data is deemed too inaccurate to use.
+    pub fn downscale_to_octant(&mut self, src: Self, dst_octant: u8) -> bool {
         let src_pairs_mask = simd_swizzle!(
-            u8x4::from_array([0b11111100, 0b11110011, 0b11001111, 0b00111111]),
+            u8x4::from_array([0b00000011, 0b00001100, 0b00110000, 0b11000000]),
             [
                 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3,
                 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3,
@@ -91,20 +93,10 @@ impl NodeStorage {
             ]
         );
 
-        let set_cubes = if OPAQUE {
-            // downscaling opaque blocks
-            let masked_pairs =
-                (first_pair_nodes & second_pair_nodes & third_pair_nodes & fourth_pair_nodes)
-                    | src_pairs_mask;
-            masked_pairs.simd_eq(u8x64::splat(0b11111111))
-        } else {
-            // downscaling traversal data
-            let masked_pairs =
-                (first_pair_nodes | second_pair_nodes | third_pair_nodes | fourth_pair_nodes)
-                    & !src_pairs_mask;
-            masked_pairs.simd_ne(u8x64::splat(0b00000000))
-        }
-        .to_bitmask();
+        let masked_pairs =
+            (first_pair_nodes | second_pair_nodes | third_pair_nodes | fourth_pair_nodes)
+                & src_pairs_mask;
+        let set_cubes = masked_pairs.simd_ne(u8x64::splat(0b00000000)).to_bitmask();
 
         // quadrant X determines whether left or right nibble is the destination
         let dst_x_shift = dst_octant & 0b100;
@@ -155,20 +147,22 @@ impl NodeStorage {
         *dst_half &= !dst_full_mask;
         *dst_half |= masked_bytes;
 
-        if OPAQUE {
-            let original_population = src.population();
-            let downscaled_population = set_cubes.count_ones() as u8;
+        let downscaled_population = set_cubes.count_ones() as u8;
 
-            // we offset the numerator by 1 so this can sometimes pass when
-            // downscaled_population is 0
-            ((downscaled_population + 1) as f32 / original_population as f32)
-                < (Self::CHILD_TRAVERSE_THRESHOLD / 8.0)
-        } else {
+        // this covers the divide-by-0 case
+        if downscaled_population <= 0 {
             true
+        } else {
+            let original_population = src.population() as u16;
+
+            // the downscaled version will always have 1/8th of the data, so we have to
+            // factor that in in our comparison.
+            (downscaled_population as f32 / original_population as f32)
+                < const { Self::EXTRAPOLATION_THRESHOLD / 8.0 }
         }
     }
 
-    pub fn upscale(self, src_octant: u8) -> Self {
+    pub fn upscale_octant(self, src_octant: u8) -> Self {
         // if the quadrant Z coordinate is 1, shift each index by 32.
         // we can replicate this by choosing either the upper or lower half of the node
         // data.
@@ -489,8 +483,7 @@ impl NodeStorage {
 // the resolution on each axis
 #[derive(Debug)]
 pub struct Tile {
-    // TODO: store traversable nodes instead?
-    pub opaque_nodes: NodeStorage,
+    pub traversable_nodes: NodeStorage,
     // There are 8 possible child nodes, each bit represents a child.
     // Indices are formatted as XYZ.
     // Not necessary on level 0, possibly remove this?
@@ -520,7 +513,7 @@ impl Default for Tile {
             traversed_nodes: NodeStorage::EMPTY,
             visible_nodes: NodeStorage::EMPTY,
             // visibility fully blocked by default
-            opaque_nodes: NodeStorage::EMPTY,
+            traversable_nodes: NodeStorage::EMPTY,
             children_to_traverse: 0,
             traversal_status: TraversalStatus::Uninitialized,
         }
@@ -539,61 +532,61 @@ impl Tile {
 
     // TODO: make sure this is sound with up and downscaling
     // TODO: review all fast paths
-    pub fn find_visible_nodes<const TRAVERSAL_DIRECTIONS: u8>(
+    // TODO: speed this up and use the special iteration approach
+    pub fn find_visible_nodes(
         &mut self,
         incoming_traversed_nodes: u8x64,
         direction_masks: &[u8x64; 6],
+        traversal_directions: u8,
     ) {
         // the uses of these variables should optimize out, as they're evaluated at
         // comptime
-        let do_shift_neg_x = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_X) };
-        let do_shift_pos_x = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_Y) };
-        let do_shift_neg_y = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_Z) };
-        let do_shift_pos_y = const { bitset::contains(TRAVERSAL_DIRECTIONS, POS_X) };
-        let do_shift_neg_z = const { bitset::contains(TRAVERSAL_DIRECTIONS, POS_Y) };
-        let do_shift_pos_z = const { bitset::contains(TRAVERSAL_DIRECTIONS, POS_Z) };
+        let do_shift_neg_x = bitset::contains(traversal_directions, NEG_X);
+        let do_shift_pos_x = bitset::contains(traversal_directions, NEG_Y);
+        let do_shift_neg_y = bitset::contains(traversal_directions, NEG_Z);
+        let do_shift_pos_y = bitset::contains(traversal_directions, POS_X);
+        let do_shift_neg_z = bitset::contains(traversal_directions, POS_Y);
+        let do_shift_pos_z = bitset::contains(traversal_directions, POS_Z);
 
-        let use_x_mask = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_X | POS_X) };
-        let use_y_mask = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_Y | POS_Y) };
-        let use_z_mask = const { bitset::contains(TRAVERSAL_DIRECTIONS, NEG_Z | POS_Z) };
+        let use_x_mask = bitset::contains(traversal_directions, NEG_X | POS_X);
+        let use_y_mask = bitset::contains(traversal_directions, NEG_Y | POS_Y);
+        let use_z_mask = bitset::contains(traversal_directions, NEG_Z | POS_Z);
 
         // these should be optimized out if they aren't used
-        let neg_x_mask = direction_masks[to_index(NEG_X) as usize];
-        let pos_x_mask = direction_masks[to_index(POS_X) as usize];
-        let neg_y_mask = direction_masks[to_index(NEG_Y) as usize];
-        let pos_y_mask = direction_masks[to_index(POS_Y) as usize];
-        let neg_z_mask = direction_masks[to_index(NEG_Z) as usize];
-        let pos_z_mask = direction_masks[to_index(POS_Z) as usize];
+        let neg_x_mask = unsafe { direction_masks.get_unchecked(to_index(NEG_X) as usize) };
+        let neg_y_mask = unsafe { direction_masks.get_unchecked(to_index(NEG_Y) as usize) };
+        let neg_z_mask = unsafe { direction_masks.get_unchecked(to_index(NEG_Z) as usize) };
+        let pos_x_mask = unsafe { direction_masks.get_unchecked(to_index(POS_X) as usize) };
+        let pos_y_mask = unsafe { direction_masks.get_unchecked(to_index(POS_Y) as usize) };
+        let pos_z_mask = unsafe { direction_masks.get_unchecked(to_index(POS_Z) as usize) };
 
-        let traversable_nodes = !self.opaque_nodes.0;
-
-        // if TRAVERSAL_DIRECTIONS.count_ones() == 3 {
-        // TODO OPT: fast path for air in octants: if opaque is all 0s, and the corner
-        // bit in the edge data is 1, the whole thing will be 1s
+        // if traversal_directions.count_ones() == 3 {
+        // TODO OPT: fast path for air in octants: if traversable is all 1s, and the
+        // corner bit in the edge data is 1, the whole thing will be 1s
         // }
 
         // the traversal masks always are used, and are combined prior to traversal with
-        // the opaque nodes mask.
-        let mut neg_x_combined_mask = traversable_nodes;
-        let mut neg_y_combined_mask = traversable_nodes;
-        let mut neg_z_combined_mask = traversable_nodes;
-        let mut pos_x_combined_mask = traversable_nodes;
-        let mut pos_y_combined_mask = traversable_nodes;
-        let mut pos_z_combined_mask = traversable_nodes;
+        // the traversable nodes mask.
+        let mut neg_x_combined_mask = self.traversable_nodes.0;
+        let mut neg_y_combined_mask = self.traversable_nodes.0;
+        let mut neg_z_combined_mask = self.traversable_nodes.0;
+        let mut pos_x_combined_mask = self.traversable_nodes.0;
+        let mut pos_y_combined_mask = self.traversable_nodes.0;
+        let mut pos_z_combined_mask = self.traversable_nodes.0;
 
         // we need to add direction-specific masks when there are pairs of opposing
         // directions
         if use_x_mask {
-            neg_x_combined_mask |= direction_masks[to_index(NEG_X) as usize];
-            pos_x_combined_mask |= direction_masks[to_index(POS_X) as usize];
+            neg_x_combined_mask |= neg_x_mask;
+            pos_x_combined_mask |= pos_x_mask;
         }
         if use_y_mask {
-            neg_y_combined_mask |= direction_masks[to_index(NEG_Y) as usize];
-            pos_y_combined_mask |= direction_masks[to_index(POS_Y) as usize];
+            neg_y_combined_mask |= neg_y_mask;
+            pos_y_combined_mask |= pos_y_mask;
         }
         if use_z_mask {
-            neg_z_combined_mask |= direction_masks[to_index(NEG_Z) as usize];
-            pos_z_combined_mask |= direction_masks[to_index(POS_Z) as usize];
+            neg_z_combined_mask |= neg_z_mask;
+            pos_z_combined_mask |= pos_z_mask;
         }
 
         let mut traversed_nodes = incoming_traversed_nodes;
@@ -630,8 +623,9 @@ impl Tile {
         self.traversed_nodes = NodeStorage(traversed_nodes);
 
         // we have to do one more traversal step, individually shifting the traversed
-        // nodes each direction without masking the opaque nodes. This gives us the
-        // visible, possibly opaque neighbors of the currently traversed nodes.
+        // nodes each direction without masking with the traversable nodes. This gives
+        // us the visible, possibly untraversable neighbors of the currently traversed
+        // nodes.
         let mut visible_nodes = traversed_nodes;
 
         if do_shift_neg_x {

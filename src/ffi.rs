@@ -38,7 +38,7 @@ pub struct FFICamera {
 }
 
 #[repr(C)]
-pub struct FFISectionOpaqueBlocks([u8; 512]);
+pub struct FFISectionTraversableBlocks([u8; 512]);
 
 #[repr(C)]
 pub struct FFIVisibleSectionsTile {
@@ -108,17 +108,17 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSet
     x: i32,
     y: i32,
     z: i32,
-    opaque_blocks_ptr: *const FFISectionOpaqueBlocks,
+    traversable_blocks_ptr: *const FFISectionTraversableBlocks,
 ) {
     let graph = graph_ptr
         .as_mut()
         .expect("expected pointer to graph to be valid");
 
-    let opaque_blocks = opaque_blocks_ptr
+    let traversable_blocks = traversable_blocks_ptr
         .as_ref()
-        .expect("expected pointer to opaque blocks to be valid");
+        .expect("expected pointer to traversable blocks to be valid");
 
-    graph.set_section(i32x3::from_xyz(x, y, z), &opaque_blocks.0);
+    graph.set_section(i32x3::from_xyz(x, y, z), &traversable_blocks.0);
 }
 
 #[no_mangle]
@@ -147,7 +147,7 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
     search_distance: f32,
     use_occlusion_culling: bool,
 ) {
-    println!("start search ----------");
+    println!("start search --------------------------");
 
     let graph = graph_ptr
         .as_mut()

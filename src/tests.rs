@@ -1,10 +1,15 @@
 #![cfg(test)]
 
+use std::collections::HashSet;
+
 use core_simd::simd::*;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
+use crate::graph::coords::{GraphCoordSpace, LocalTileCoords, SortedChildIterator};
+use crate::graph::direction::*;
 use crate::graph::tile::NodeStorage;
+use crate::math::Coords3;
 
 const RANDOM_SEED: u64 = 8427234087098706983;
 
@@ -39,7 +44,7 @@ fn upscale_tile() {
             let quad_y_mod = if src_octant & 0b010 == 0 { 0 } else { 4 };
             let quad_z_mod = if src_octant & 0b001 == 0 { 0 } else { 4 };
 
-            let dst_node_storage = src_node_storage.upscale(src_octant);
+            let dst_node_storage = src_node_storage.upscale_octant(src_octant);
 
             for z in 0..4 {
                 for y in 0..4 {
@@ -76,25 +81,24 @@ fn downscale_tile() {
     for dst_octant in 0..8 {
         for _ in 0..ITERATIONS {
             let mut src_node_storage = NodeStorage::EMPTY;
-            let mut dst_node_storage_modified = NodeStorage::EMPTY;
+            let mut dst_node_storage = NodeStorage::EMPTY;
 
             rand.fill_bytes(src_node_storage.0.as_mut_array());
-            rand.fill_bytes(dst_node_storage_modified.0.as_mut_array());
+            rand.fill_bytes(dst_node_storage.0.as_mut_array());
 
-            let dst_node_storage_original = dst_node_storage_modified;
+            let mut dst_node_storage_modified = dst_node_storage;
 
-            dst_node_storage_modified.downscale_to_octant::<false>(src_node_storage, dst_octant);
+            dst_node_storage_modified.downscale_to_octant(src_node_storage, dst_octant);
 
             for z in 0..8 {
                 for y in 0..8 {
                     for x in 0..8 {
                         let cur_octant = (x & 0b100) | ((y & 0b100) >> 1) | ((z & 0b100) >> 2);
                         let dst_idx = NodeStorage::index(x, y, z);
-                        let dst_val = dst_node_storage_modified.get_bit(dst_idx);
+                        let dst_val_modified = dst_node_storage_modified.get_bit(dst_idx);
 
                         if cur_octant == dst_octant {
                             let mut src_val = false;
-                            // let mut src_val = true;
                             for z2 in 0..2 {
                                 for y2 in 0..2 {
                                     for x2 in 0..2 {
@@ -104,16 +108,15 @@ fn downscale_tile() {
                                             ((z & 0b11) * 2) + z2,
                                         );
                                         src_val |= src_node_storage.get_bit(src_idx);
-                                        // src_val &= src_node_storage.get_bit(src_idx);
                                     }
                                 }
                             }
-                            assert_eq!(dst_val, src_val,
+                            assert_eq!(dst_val_modified, src_val,
                                 "Source and Destination don't match at {dst_idx:b}, x: {x} y: {y} z: {z}"
                             );
                         } else {
-                            let orig_val = dst_node_storage_original.get_bit(dst_idx);
-                            assert_eq!(dst_val, orig_val,
+                            let orig_val_modified = dst_node_storage.get_bit(dst_idx);
+                            assert_eq!(dst_val_modified, orig_val_modified,
                                 "Destination and Original don't match at {dst_idx}, x: {x} y: {y} z: {z}"
                             );
                         }
@@ -358,6 +361,49 @@ fn edge_move_test() {
     }
 }
 
+// TODO: actually test the order here
+#[test]
+fn sorted_iter_test() {
+    let coord_space = GraphCoordSpace::new(6, 6, 6, -4, 19);
+    let coords = LocalTileCoords(Simd::from_xyz(10, 15, 31));
+    let index = coord_space.pack_index(coords);
+    let camera_block_coords = coord_space.block_to_local_coords(Simd::from_xyz(10, 30, 50));
+    let level = 1;
+    let children_present = 0b10101111;
+
+    let mut sorted_indices = HashSet::new();
+    let mut unsorted_indices = HashSet::new();
+
+    let iter_sorted =
+        SortedChildIterator::new(index, coords, level, camera_block_coords, children_present);
+    for (child_index, child_coords) in iter_sorted {
+        let calculated_child_index = coord_space.pack_index(child_coords);
+        assert_eq!(calculated_child_index, child_index);
+        println!("{:?} {:?}", child_coords, child_index);
+        sorted_indices.insert(child_index);
+    }
+
+    let iter_unsorted = index.unordered_child_iter(children_present);
+    for child_index in iter_unsorted {
+        unsorted_indices.insert(child_index);
+    }
+
+    assert_eq!(sorted_indices, unsorted_indices);
+}
+
+// TODO: make this automatic
+#[test]
+fn step_wrapping_test() {
+    let coord_space = GraphCoordSpace::new(6, 6, 6, -4, 19);
+    let coords = LocalTileCoords(Simd::from_xyz(10, 15, 31));
+
+    let mut direction_set = ALL_DIRECTIONS;
+    while direction_set != 0 {
+        let direction = take_any(&mut direction_set);
+        let stepped = coord_space.step_wrapping(coords, direction, 1);
+        println!("{} {:?}", to_str(direction), stepped);
+    }
+}
+
 // TODO: test clearing the graph, test searching traversed nodes, test axis and
-// plane masks, test coordinate stepping, test sorted child iteration, test
-// downscale of traversal data
+// plane masks
