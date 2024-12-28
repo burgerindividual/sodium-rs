@@ -32,7 +32,7 @@ impl NodeStorage {
         let array_idx = index >> 3;
         let bit_idx = index & 0b111;
 
-        let byte = self.0[array_idx as usize];
+        let byte = unsafe { *self.0.as_array().get_unchecked(array_idx as usize) };
         ((byte >> bit_idx) & 0b1) != 0
     }
 
@@ -40,7 +40,7 @@ impl NodeStorage {
         let array_idx = index >> 3;
         let bit_idx = index & 0b111;
 
-        let byte = &mut self.0[array_idx as usize];
+        let byte = unsafe { self.0.as_mut_array().get_unchecked_mut(array_idx as usize) };
         *byte &= !(0b1 << bit_idx);
         *byte |= (value as u8) << bit_idx;
     }

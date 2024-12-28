@@ -7,6 +7,8 @@ pub struct GraphSearchContext {
     frustum: LocalFrustum,
 
     // pub global_region_offset: i32x3,
+    pub global_section_offset: i32x3,
+
     fog_distance: f32,
 
     // the camera coords (in blocks) relative to the local origin, which is the (0, 0, 0) point of
@@ -39,15 +41,16 @@ impl GraphSearchContext {
         let frustum = LocalFrustum::new(frustum_planes);
 
         let global_camera_pos_floor = global_camera_pos.floor();
-        let global_camera_pos_int = unsafe { global_camera_pos_floor.to_int_unchecked::<i32>() };
-
         // see the comment in CameraTransform.java for why we reduce the precision
         const PRECISION_MODIFIER: f32x3 = Simd::splat(128.0);
         let camera_pos_frac = ((global_camera_pos - global_camera_pos_floor).cast::<f32>()
             + PRECISION_MODIFIER)
             - PRECISION_MODIFIER;
 
+        let global_camera_pos_int = unsafe { global_camera_pos_floor.to_int_unchecked::<i32>() };
+
         let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
+        let global_section_offset = global_camera_pos_int - camera_pos_int.cast::<i32>();
         let iter_start_pos = camera_pos_int >> Simd::splat(7);
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
@@ -84,6 +87,7 @@ impl GraphSearchContext {
 
         Self {
             frustum,
+            global_section_offset,
             fog_distance: search_distance,
             camera_pos_int,
             camera_pos_frac,

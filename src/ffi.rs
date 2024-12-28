@@ -3,7 +3,6 @@
 use std::boxed::Box;
 
 use context::GraphSearchContext;
-use coords::LocalTileCoords;
 use core_simd::simd::Simd;
 use tile::NodeStorage;
 
@@ -43,14 +42,14 @@ pub struct FFISectionTraversableBlocks([u8; 512]);
 #[repr(C)]
 pub struct FFIVisibleSectionsTile {
     visible_sections_ptr: *const [u64; 8],
-    tile_coords: [u16; 3],
+    origin_section_coords: [i32; 3],
 }
 
 impl FFIVisibleSectionsTile {
-    pub fn new(visible_sections: *const NodeStorage, coords: LocalTileCoords) -> Self {
+    pub fn new(visible_sections: *const NodeStorage, origin_section_coords: i32x3) -> Self {
         Self {
             visible_sections_ptr: visible_sections.cast::<[u64; 8]>(),
-            tile_coords: coords.0.to_array(),
+            origin_section_coords: origin_section_coords.to_array(),
         }
     }
 }
@@ -174,6 +173,15 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
     );
 
     graph.cull(&context);
+
+    let mut sum: u32 = 0;
+    for tile in &graph.visible_tiles {
+        for part in *tile.visible_sections_ptr {
+            sum += part.count_ones();
+        }
+    }
+
+    println!("Visible Sections: {}", sum);
 
     *return_value_ptr = graph.visible_tiles.as_slice().into();
 }

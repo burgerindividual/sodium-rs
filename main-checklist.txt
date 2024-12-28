@@ -1,3 +1,6 @@
+WARNING: A lot of the notes under each of the checklist items is wrong, as things changed during actual development.
+I am not deleting these because I'd like to archive the thought process behind how some things were written.
+
 [x] Frustum Test: sodium-rs/src/graph/local/mod.rs
     - make sure not to do frustum tests for tiles that are too small (level 0)
 
@@ -72,41 +75,66 @@
     - check over all parameter names
     - write with panama or jni in mind? ask jelly (we will be using panama until further notice)
 
-[-] Building Section List and Sending to Java
-    - ideas to set full tile in bit array?
-    - make fully packed?
-    - dealing with levels?
+[x] Remove "Upmipped" from traversal state
 
 [x] Traversal data to section visibility data
 
 [x] Rewrite to use runtime direction sets
 
+[x] Building Section List and Sending to Java
+    - ideas to set full tile in bit array?
+    - make fully packed?
+    - dealing with levels?
+
 [-] Operation Javacide
 
 [-] Write more tests
+    - check the todo in the tests file for more info
+
+[ ] Run frustum test on children who don't need to be traversed
+    - Use a different algorithm to determine whether early checks should be run, likely during section set.
+    - If the section flags on section build is empty
+
+[ ] Queueing unloaded sections on the edges of the view.
+
+[ ] Clear up TODOs in the codebase
 
 LATER:
-
 [ ] Multiversioning
 
-[ ] Stop Java from Generating Visibility Lists (if possible)
+[ ] Generate visibility lists in a way Java doesn't have to process
+
+[ ] Speed up visibility list generation
 
 [ ] Move from Nightly to Stable
     - Requires full move from std::simd to std::arch, or a library equivalent
 
 [ ] Fast Paths for Simple Tiles
-    - Reintroduce "Skipped" state? excluded for simplicity for now.
-
-[ ] Remove "Upmipped" from traversal state
 
 [ ] Smarter version of Graph.clear
+    - maybe add a "last traversed timestamp" to each tile, which is checked on access. this could
+      be based off a static AtomicU32 which is incremented on every call to the graph search. the
+      current timestamp can be stored in the GraphSearchContext
 
 [ ] Smarter version of Graph.remove_section
 
 [ ] Make "use occlusion culling" actually work for disabling in spectator mode
+    - maybe just traverse the bit inverse of the traversable nodes? i think it could possibly work
 
 [ ] Extensive documentation of the base bfs algorithm, the graph and tile representations, and individual methods
 
 [ ] Re-introduce const generic directions
     - option 1: have lists for different direction combinations, add children to these lists and iterate
     - option 2: have const generic "guaranteed directions" and runtime "possible directions"
+
+[ ] Douira's special culling
+
+[ ] Ray culling
+
+[ ] Speed up runtime direction sets, make their API less "C-like"
+
+[ ] Separate tests into the expected files (maybe)
+
+[ ] Should setting tiles be on the render thread in java?
+    - It's not multithreaded, but it is parallel to the render thread currently, with how it's synchronized.
+      Is this good?

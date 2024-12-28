@@ -26,7 +26,7 @@ pub struct Graph {
 
     pub coord_space: GraphCoordSpace,
     pub render_distance: u8,
-    upper_tile_tests: CombinedTestResults,
+    enabled_tile_checks: CombinedTestResults,
 
     pub visible_tiles: Vec<FFIVisibleSectionsTile>,
 }
@@ -67,7 +67,7 @@ impl Graph {
         let skip_height_checks =
             world_height_level_0 == (world_height_level_0 & (-1_i16 << Self::HIGHEST_LEVEL) as u16);
 
-        let upper_tile_tests = if skip_height_checks {
+        let enabled_tile_checks = if skip_height_checks {
             CombinedTestResults::HEIGHT_INSIDE
         } else {
             CombinedTestResults::NONE_INSIDE
@@ -83,7 +83,7 @@ impl Graph {
                 world_top_section_y,
             ),
             render_distance,
-            upper_tile_tests,
+            enabled_tile_checks,
             visible_tiles: Vec::with_capacity(128), // probably not a bad start
         }
     }
@@ -188,15 +188,24 @@ impl Graph {
             index,
             coords,
             Self::HIGHEST_LEVEL,
-            self.upper_tile_tests,
+            self.enabled_tile_checks,
         );
 
         let tile = self.get_tile(index, Self::HIGHEST_LEVEL);
 
         if tile.visible_nodes != NodeStorage::EMPTY {
+            let mut tile_section_coords = coords;
+            // go from the highest level to level 1, which is the section level
+            for _ in 1..Self::HIGHEST_LEVEL {
+                tile_section_coords = tile_section_coords.to_child_level();
+            }
+
+            let origin_section_coords =
+                context.global_section_offset + tile_section_coords.0.cast::<i32>();
+
             self.visible_tiles.push(FFIVisibleSectionsTile::new(
                 &raw const tile.visible_nodes,
-                coords,
+                origin_section_coords,
             ));
         }
     }
@@ -320,13 +329,12 @@ impl Graph {
             unsafe {
                 assert_unchecked(level <= Graph::HIGHEST_LEVEL);
             }
-            let camera_coords_in_tile = (context.camera_pos_int >> Simd::splat(level as u16))
-                .cast::<u8>()
-                & Simd::splat(0b111);
+            let camera_coords_in_tile =
+                (context.camera_pos_int >> Simd::splat(level as u16)) & Simd::splat(0b111);
             let camera_node_index = NodeStorage::index(
-                camera_coords_in_tile.x(),
-                camera_coords_in_tile.y(),
-                camera_coords_in_tile.z(),
+                camera_coords_in_tile.x() as u8,
+                camera_coords_in_tile.y() as u8,
+                camera_coords_in_tile.z() as u8,
             );
 
             let mut traversed_nodes = NodeStorage::EMPTY;
@@ -473,7 +481,7 @@ impl Graph {
 
         let mut upscaled_traversed_nodes =
             parent_traversed_nodes.upscale_octant(index.child_octant());
-        upscaled_traversed_nodes.0 &= !tile.traversable_nodes.0;
+        upscaled_traversed_nodes.0 &= tile.traversable_nodes.0;
 
         tile.traversed_nodes = upscaled_traversed_nodes;
         tile.traversal_status = TraversalStatus::Downmipped;
@@ -547,9 +555,9 @@ impl Graph {
         parent_tile.children_to_traverse &= !(0b1 << child_octant);
         parent_tile.children_to_traverse |= (should_traverse_child as u8) << child_octant;
 
-        let parent_traversable_nodes = parent_tile.traversable_nodes;
-
         if parent_level < Self::HIGHEST_LEVEL {
+            let parent_traversable_nodes = parent_tile.traversable_nodes;
+
             self.propagate_traversable_nodes_up(
                 parent_index,
                 parent_traversable_nodes,
