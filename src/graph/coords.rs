@@ -2,15 +2,14 @@ use std::hint::assert_unchecked;
 
 use core_simd::simd::prelude::*;
 
-use super::{direction, i32x3, u16x3, u8x3, Coords3, Graph};
+use super::{direction, i16x3, i32x3, u16x3, u8x3, Coords3, Graph};
 
 pub struct GraphCoordSpace {
     morton_swizzle_pattern: u8x32,
     morton_bitmasks: u8x32,
 
-    section_bitmask: u16x3,
     block_bitmask: u16x3,
-    level_0_tile_bitmask: u16x3,
+    section_bitmask: i16x3,
 
     pub world_bottom_section_y: i8,
     pub world_top_section_y: i8,
@@ -26,19 +25,19 @@ impl GraphCoordSpace {
     ) -> Self {
         // NOTE: extra bits need to be present in the LocalTileCoords, but not in the
         // LocalTileIndex, as long as we're not doing any unpacking.
-        let bit_counts = u8x3::from_xyz(x_bits, y_bits, z_bits).cast::<u16>();
+        let bit_counts = u8x3::from_xyz(x_bits, y_bits, z_bits).cast::<i16>();
 
         let mut coord_space = Self {
             // setting the top bit to 1 results in 0 being placed in a dynamic shuffle
-            morton_swizzle_pattern: u8x32::splat(0b10000000),
+            morton_swizzle_pattern: Simd::splat(0b10000000),
             morton_bitmasks: u8x32::splat(0),
             // the amount of bits are specified in terms of graph level 0.
             // we need to shift them to the right by 1 extra, because we're dealing with sections,
             // which are represented as graph level 1.
-            section_bitmask: (u16x3::splat(0b1) << (bit_counts - u16x3::splat(1)))
+            block_bitmask: (u16x3::splat(0b1) << (bit_counts.cast::<u16>() + u16x3::splat(3)))
                 - u16x3::splat(1),
-            block_bitmask: (u16x3::splat(0b1) << (bit_counts + u16x3::splat(3))) - u16x3::splat(1),
-            level_0_tile_bitmask: (u16x3::splat(0b1) << bit_counts) - u16x3::splat(1),
+            section_bitmask: (i16x3::splat(0b1) << (bit_counts - i16x3::splat(1)))
+                - i16x3::splat(1),
             world_bottom_section_y,
             world_top_section_y,
         };
@@ -85,9 +84,14 @@ impl GraphCoordSpace {
         coord_space
     }
 
-    pub fn pack_index(&self, coords: LocalTileCoords) -> LocalTileIndex {
-        #[cfg(target_feature = "avx2")]
+    pub fn pack_index(&self, coords: LocalTileCoords, level: u8) -> LocalTileIndex {
         unsafe {
+            assert_unchecked(level <= Graph::HIGHEST_LEVEL);
+        }
+        let shifted_coords = coords.0 << Simd::splat(level as i16);
+
+        #[cfg(target_feature = "avx2")]
+        let packed_morton_bits = unsafe {
             use std::arch::x86_64::*;
             use std::mem::MaybeUninit;
 
@@ -95,7 +99,7 @@ impl GraphCoordSpace {
             // very fragile. currently, this produces optimal codegen.
             #[allow(invalid_value)] // yeah, we know
             let broadcasted_coords = simd_swizzle!(
-                coords.0,
+                shifted_coords,
                 MaybeUninit::uninit().assume_init(),
                 [0, 1, 2, 3, 3, 3, 3, 3, 0, 1, 2, 3, 3, 3, 3, 3,]
             )
@@ -113,20 +117,18 @@ impl GraphCoordSpace {
 
             // check if masked bit is set (!= 0) or unset (== 0) for each lane, then pack
             // each lane into one bit.
-            let packed_morton_bits = !_mm256_movemask_epi8(_mm256_cmpeq_epi8(
+            !_mm256_movemask_epi8(_mm256_cmpeq_epi8(
                 expanded_morton_bits,
                 _mm256_setzero_si256(),
-            )) as u32;
-
-            LocalTileIndex(packed_morton_bits)
-        }
+            )) as u32
+        };
 
         #[cfg(not(target_feature = "avx2"))]
-        {
+        let packed_morton_bits = {
             use std::mem::transmute;
 
             let broadcasted_coords =
-                simd_swizzle!(coords.0, Simd::splat(0), [0, 1, 2, 3, 3, 3, 3, 3,]);
+                simd_swizzle!(shifted_coords, Simd::splat(0), [0, 1, 2, 3, 3, 3, 3, 3,]);
 
             // allocate one byte per bit for each element. each element is still has its
             // individual bits in linear ordering, but the bytes in the vector
@@ -148,17 +150,16 @@ impl GraphCoordSpace {
             // each lane into one bit.
             // simd_eq and a NOT on the bitmask is used here, because on x86, it's faster
             // than simd_neq
-            let packed_morton_bits =
-                !(expanded_morton_bits.simd_eq(Simd::splat(0)).to_bitmask() as u32);
+            !(expanded_morton_bits.simd_eq(Simd::splat(0)).to_bitmask() as u32)
+        };
 
-            LocalTileIndex(packed_morton_bits)
-        }
+        LocalTileIndex(packed_morton_bits >> level * 3)
     }
 
     pub fn section_to_local_coords(&self, section_coords: i32x3) -> LocalTileCoords {
         let shifted_coords =
             section_coords - i32x3::from_xyz(0, self.world_bottom_section_y as i32, 0);
-        LocalTileCoords(shifted_coords.cast::<u16>() & self.section_bitmask)
+        LocalTileCoords(shifted_coords.cast::<i16>() & self.section_bitmask)
     }
 
     pub fn block_to_local_coords(&self, block_coords: i32x3) -> u16x3 {
@@ -167,33 +168,42 @@ impl GraphCoordSpace {
         shifted_coords.cast::<u16>() & self.block_bitmask
     }
 
-    pub fn coords_bitmask(&self, level: u8) -> u16x3 {
-        unsafe {
-            assert_unchecked(level <= Graph::HIGHEST_LEVEL);
-        }
-        self.level_0_tile_bitmask >> Simd::splat(level as u16)
-    }
-
-    pub fn step_wrapping(
-        &self,
-        coords: LocalTileCoords,
-        direction: u8,
-        level: u8,
-    ) -> LocalTileCoords {
+    pub fn step(&self, coords: LocalTileCoords, direction: u8) -> LocalTileCoords {
+        // position a 1-byte mask within a 6-byte SWAR vector, with each of the 6 bytes
+        // representing a direction
         let dir_index = direction::to_index(direction);
         let shifted_byte = 0xFF_u64 << (dir_index * 8);
+
+        // positive directions (indices 3, 4, and 5) need to be shifted into the lower
+        // half. this lets us convert it to a 3-byte vector.
+        // the mask is used to turn each present value in the mask into a positive 1.
         let pos_selected = (shifted_byte >> 24) as u32 & 0x01_01_01;
+
+        // negative directions (indices 0, 1, and 2) are already in the bottom half, so
+        // we mask out the top half. the mask here is also used to turn each present
+        // value in the mask into a negative 1, or 0xFF in hex.
         let neg_selected = shifted_byte as u32 & 0xFF_FF_FF;
+
+        // because we only allow 1 direction to be passed to this function, we know that
+        // one of the two vectors will be empty. we can combine the positive and
+        // negative vectors to get a vector that we know contains our increment value.
         let collapsed_selected = pos_selected | neg_selected;
-        let offset_vec = Simd::from_array(collapsed_selected.to_le_bytes()).resize(0);
-        let sum = (coords.0.cast::<i16>() + offset_vec.cast::<i16>()).cast::<u16>();
-        LocalTileCoords(sum & self.coords_bitmask(level))
+
+        // each byte in the SWAR register is actually meant to represent an i8, so we
+        // turn the bytes into a vector and cast it as such.
+        let offset_vec = Simd::from_array(collapsed_selected.to_le_bytes())
+            .resize(0)
+            .cast::<i8>();
+
+        // sign-extend the offset vec and add it to the coords.
+        let sum = coords.0 + offset_vec.cast::<i16>();
+        LocalTileCoords(sum)
     }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[repr(align(8))]
-pub struct LocalTileCoords(pub u16x3);
+pub struct LocalTileCoords(pub i16x3);
 
 impl LocalTileCoords {
     pub fn to_parent_level(self) -> Self {
@@ -204,11 +214,11 @@ impl LocalTileCoords {
         Self(self.0 << Simd::splat(1))
     }
 
-    pub fn to_block_coords(self, level: u8) -> u16x3 {
+    pub fn to_block_coords(self, level: u8) -> i16x3 {
         unsafe {
             assert_unchecked(level <= Graph::HIGHEST_LEVEL);
         }
-        self.0 << Simd::splat(level as u16 + 3)
+        self.0 << Simd::splat(level as i16 + 3)
     }
 
     pub fn block_length(level: u8) -> u8 {
@@ -216,24 +226,24 @@ impl LocalTileCoords {
     }
 }
 
-impl Coords3<u16> for LocalTileCoords {
-    fn from_xyz(x: u16, y: u16, z: u16) -> Self {
+impl Coords3<i16> for LocalTileCoords {
+    fn from_xyz(x: i16, y: i16, z: i16) -> Self {
         Self(Simd::from_xyz(x, y, z))
     }
 
-    fn into_tuple(self) -> (u16, u16, u16) {
+    fn into_tuple(self) -> (i16, i16, i16) {
         self.0.into_tuple()
     }
 
-    fn x(&self) -> u16 {
+    fn x(&self) -> i16 {
         self.0.x()
     }
 
-    fn y(&self) -> u16 {
+    fn y(&self) -> i16 {
         self.0.y()
     }
 
-    fn z(&self) -> u16 {
+    fn z(&self) -> i16 {
         self.0.z()
     }
 }
@@ -301,7 +311,7 @@ pub struct SortedChildIterator {
     sorted_child_octant_coords: u16x3,
 
     parent_index_high_bits: u32,
-    parent_coords_high_bits: u16x3,
+    parent_coords_high_bits: i16x3,
 }
 
 impl SortedChildIterator {
@@ -309,17 +319,18 @@ impl SortedChildIterator {
         index: LocalTileIndex,
         coords: LocalTileCoords,
         level: u8,
-        camera_block_coords: u16x3,
+        camera_block_coords: i16x3,
         children_present: u8,
     ) -> Self {
         let parent_index_high_bits = index.to_child_level().0;
         let parent_coords_high_bits = coords.to_child_level().0;
 
         let middle_coords = coords.to_block_coords(level)
-            + Simd::splat(LocalTileCoords::block_length(level) as u16 / 2);
+            + Simd::splat(LocalTileCoords::block_length(level) as i16 / 2);
         let first_child_coords = camera_block_coords.simd_ge(middle_coords);
-        // this will create an index of a child with the bit order XYZ
-        let first_child_octant = first_child_coords.to_bitmask() as u32;
+        // this will create the octant index of a child with the bit order XYZ. the call
+        // to reverse is necessary to get the correct bit order.
+        let first_child_octant = first_child_coords.reverse().to_bitmask() as u32;
 
         // broadcast first child to 8 "lanes" of 3 buts.
         let mut sorted_child_octants = first_child_octant * 0b001_001_001_001_001_001_001_001;
@@ -352,7 +363,8 @@ impl SortedChildIterator {
 }
 
 impl Iterator for SortedChildIterator {
-    // We return both the indices and coordinates because it's easy to calculate both at once
+    // We return both the indices and coordinates because it's easy to calculate
+    // both at once
     type Item = (LocalTileIndex, LocalTileCoords);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -378,7 +390,7 @@ impl Iterator for SortedChildIterator {
 
             let child_index = LocalTileIndex(self.parent_index_high_bits | child_octant);
             let child_coords =
-                LocalTileCoords(self.parent_coords_high_bits | child_octant_coords);
+                LocalTileCoords(self.parent_coords_high_bits | child_octant_coords.cast::<i16>());
 
             Some((child_index, child_coords))
         } else {

@@ -50,7 +50,8 @@ impl GraphSearchContext {
         let global_camera_pos_int = unsafe { global_camera_pos_floor.to_int_unchecked::<i32>() };
 
         let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
-        let global_section_offset = global_camera_pos_int - camera_pos_int.cast::<i32>();
+        let global_section_offset =
+            (global_camera_pos_int - camera_pos_int.cast::<i32>()) >> Simd::splat(4);
         let iter_start_pos = camera_pos_int >> Simd::splat(7);
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
@@ -68,17 +69,6 @@ impl GraphSearchContext {
                 .cast::<u16>()
         };
 
-        // TODO: remove this check
-        let level_4_tile_bitmask = coord_space.coords_bitmask(4);
-        assert_eq!(
-            positive_step_counts,
-            positive_step_counts & level_4_tile_bitmask
-        );
-        assert_eq!(
-            negative_step_counts,
-            negative_step_counts & level_4_tile_bitmask
-        );
-
         let direction_step_counts = simd_swizzle!(
             negative_step_counts.cast::<u8>(),
             positive_step_counts.cast::<u8>(),
@@ -91,7 +81,7 @@ impl GraphSearchContext {
             fog_distance: search_distance,
             camera_pos_int,
             camera_pos_frac,
-            iter_start_tile: LocalTileCoords(iter_start_pos),
+            iter_start_tile: LocalTileCoords(iter_start_pos.cast::<i16>()),
             direction_step_counts,
             use_occlusion_culling,
             direction_masks: NodeStorage::create_direction_masks(camera_pos_int),
@@ -218,9 +208,9 @@ impl GraphSearchContext {
             coords.to_block_coords(level).cast::<i16>() - self.camera_pos_int.cast::<i16>();
         let pos_float = pos_int.cast::<f32>() - self.camera_pos_frac;
 
-        let tile_factor = f32x3::splat(LocalTileCoords::block_length(level) as f32);
+        let tile_size = f32x3::splat(LocalTileCoords::block_length(level) as f32);
 
-        RelativeBoundingBox::new(pos_float, pos_float + tile_factor)
+        RelativeBoundingBox::new(pos_float, pos_float + tile_size)
     }
 
     pub fn get_incoming_directions(&self, coords: LocalTileCoords, level: u8) -> u8 {
@@ -228,12 +218,12 @@ impl GraphSearchContext {
             assert_unchecked(level <= Graph::HIGHEST_LEVEL);
         }
         let camera_tile_coords = self.camera_pos_int >> Simd::splat(level as u16 + 3);
-        let coords_difference = coords.0.cast::<i16>() - camera_tile_coords.cast::<i16>();
+        let coords_difference = coords.0 - camera_tile_coords.cast::<i16>();
 
         let negative = coords_difference.simd_gt(Simd::splat(0));
         let positive = coords_difference.simd_lt(Simd::splat(0));
 
-        negative.to_bitmask() as u8 | (positive.to_bitmask() << 3) as u8
+        negative.to_bitmask() as u8 | ((positive.to_bitmask() as u8) << 3)
     }
 
     // TODO OPT: add douira's magic visible directions culler
@@ -262,15 +252,15 @@ impl LocalFrustum {
     // TODO OPT: get rid of W by normalizing plane_xs, ys, zs.
     //  potentially can exclude near and far plane
     pub fn test_box(&self, bb: RelativeBoundingBox, results: &mut CombinedTestResults) {
-        const SIGN_BIT_MASK: u32x6 = Simd::splat(1 << 31);
+        const SIGN_BIT: u32x6 = Simd::splat(1 << 31);
 
         // These mask shenanigans just check if the sign bit is set for each lane.
         // This is faster than doing a float comparison because we can ignore special
         // float values like infinity, and because we can hint to the compiler to use
         // vblendvps on x86.
-        let is_neg_x = self.plane_xs.to_bits().simd_ge(Simd::splat(0x80000000));
-        let is_neg_y = self.plane_ys.to_bits().simd_ge(Simd::splat(0x80000000));
-        let is_neg_z = self.plane_zs.to_bits().simd_ge(Simd::splat(0x80000000));
+        let is_neg_x = self.plane_xs.to_bits().simd_ge(SIGN_BIT);
+        let is_neg_y = self.plane_ys.to_bits().simd_ge(SIGN_BIT);
+        let is_neg_z = self.plane_zs.to_bits().simd_ge(SIGN_BIT);
 
         let bb_min_x = Simd::splat(bb.min.x());
         let bb_max_x = Simd::splat(bb.max.x());
@@ -291,7 +281,7 @@ impl LocalFrustum {
         );
 
         // TODO: double check the stuff here
-        // if any outside lengths are greater than -w, return OUTSIDE
+        // if any outside lengths are less than -w, return OUTSIDE
         // if all inside lengths are greater than -w, return INSIDE
         // otherwise, return PARTIAL
         // NOTE: it is impossible for a lane to be both inside and outside at the same
@@ -299,8 +289,8 @@ impl LocalFrustum {
 
         // the resize is necessary here because it allows LLVM to generate a vptest on
         // x86
-        let any_outside = ((outside_length_sq + self.plane_ws).to_bits() & SIGN_BIT_MASK).resize(0)
-            != u32x8::splat(0);
+        let any_outside =
+            ((outside_length_sq + self.plane_ws).to_bits() & SIGN_BIT).resize(0) != u32x8::splat(0);
 
         if any_outside {
             // early exit
@@ -318,8 +308,8 @@ impl LocalFrustum {
                 .mul_add_fast(inside_bounds_y, self.plane_zs * inside_bounds_z),
         );
 
-        let any_partial = ((inside_length_sq + self.plane_ws).to_bits() & SIGN_BIT_MASK).resize(0)
-            != u32x8::splat(0);
+        let any_partial =
+            ((inside_length_sq + self.plane_ws).to_bits() & SIGN_BIT).resize(0) != u32x8::splat(0);
 
         results.set_partial::<{ CombinedTestResults::FRUSTUM_BIT }>(any_partial);
     }

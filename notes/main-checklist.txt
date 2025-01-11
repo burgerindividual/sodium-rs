@@ -91,13 +91,29 @@ I am not deleting these because I'd like to archive the thought process behind h
 [-] Write more tests
     - check the todo in the tests file for more info
 
+[ ] Frustum voxelization
+
+[ ] Fog cylinder voxelization
+
 [ ] Run frustum test on children who don't need to be traversed
     - Use a different algorithm to determine whether early checks should be run, likely during section set.
     - If the section flags on section build is empty
 
-[ ] Queueing unloaded sections on the edges of the view.
-
 [ ] Clear up TODOs in the codebase
+
+[ ] Fix issue with find_visible_nodes giving back all 1 bits
+    - Could be an issue with the direction masks?
+    - How are the incoming nodes all 0s???
+
+[ ] Fix issue with java not interpreting the return results correctly
+
+[ ] If any children need to be traversed, should all children be traversed? Or, better yet, should the entire tree
+    for that tile be traversed down to the lowest child?
+    - Maybe we only need to attempt this for the tile the camera is in. We also may wanna do this forcibly down to
+      level 0, as that will ensure perfect accuracy.
+    - Should we attempt to traverse all children first before their parents? Doesn't sound like it would work,
+      as downscaling wouldn't work for edges it needs.
+    - Move these thoughts somewhere else
 
 LATER:
 [ ] Multiversioning

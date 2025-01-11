@@ -26,7 +26,7 @@ pub const fn opposite(direction_set: u8) -> u8 {
 }
 
 /// Removes a direction from the direction set, and returns it
-pub const fn take_any(direction_set: &mut u8) -> u8 {
+pub const fn take_one(direction_set: &mut u8) -> u8 {
     let prev_set = *direction_set;
 
     // removes the lowest bit in the bit set

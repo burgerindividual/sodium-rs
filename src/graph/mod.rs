@@ -9,7 +9,7 @@ use direction::*;
 use tile::{NodeStorage, Tile, TraversalStatus};
 
 use self::coords::LocalTileCoords;
-use crate::bitset;
+use crate::bitset::{self, modify_bit};
 use crate::ffi::FFIVisibleSectionsTile;
 use crate::math::*;
 
@@ -67,11 +67,14 @@ impl Graph {
         let skip_height_checks =
             world_height_level_0 == (world_height_level_0 & (-1_i16 << Self::HIGHEST_LEVEL) as u16);
 
-        let enabled_tile_checks = if skip_height_checks {
-            CombinedTestResults::HEIGHT_INSIDE
-        } else {
-            CombinedTestResults::NONE_INSIDE
-        };
+        // let enabled_tile_checks = if skip_height_checks {
+        //     CombinedTestResults::HEIGHT_INSIDE
+        // } else {
+        //     CombinedTestResults::NONE_INSIDE
+        // };
+
+        let mut enabled_tile_checks = CombinedTestResults::ALL_INSIDE;
+        enabled_tile_checks.set_partial::<{ CombinedTestResults::FOG_BIT }>(true);
 
         Self {
             tile_levels,
@@ -110,7 +113,8 @@ impl Graph {
         // Center
         self.process_upper_tile(
             context,
-            self.coord_space.pack_index(context.iter_start_tile),
+            self.coord_space
+                .pack_index(context.iter_start_tile, Self::HIGHEST_LEVEL),
             context.iter_start_tile,
         );
 
@@ -155,22 +159,19 @@ impl Graph {
         start_coords: LocalTileCoords,
         mut iter_directions: u8,
     ) {
-        let direction = take_any(&mut iter_directions);
-        println!("Iterating {}", to_str(direction));
+        let direction = take_one(&mut iter_directions);
         let steps = context.direction_step_counts[to_index(direction) as usize];
         let mut coords = start_coords;
 
         for _ in 0..steps {
-            coords = self
-                .coord_space
-                .step_wrapping(coords, direction, Self::HIGHEST_LEVEL);
+            coords = self.coord_space.step(coords, direction);
 
             // if the direction set is empty, we should stop recursing, and start processing
             // tiles
             if iter_directions != 0 {
                 self.iterate_dirs(context, coords, iter_directions);
             } else {
-                let index = self.coord_space.pack_index(coords);
+                let index = self.coord_space.pack_index(coords, Self::HIGHEST_LEVEL);
 
                 self.process_upper_tile(context, index, coords);
             }
@@ -210,6 +211,8 @@ impl Graph {
         }
     }
 
+    #[no_mangle]
+    #[inline(never)]
     fn process_tile(
         &mut self,
         context: &GraphSearchContext,
@@ -218,6 +221,7 @@ impl Graph {
         level: u8,
         parent_test_results: CombinedTestResults,
     ) {
+        #[cfg(debug_assertions)]
         println!(
             "Current Tile - Level {:?} Coords: {:?} Index: {:?}",
             level, coords.0, index.0
@@ -245,8 +249,9 @@ impl Graph {
 
         let children_to_traverse = tile.children_to_traverse;
 
-        // if all children are present, we don't have to process this tile, and we can
-        // solely process the children.
+        // If all children need to be traversed, we don't have to traverse this tile,
+        // and we can solely traverse the children. The traversal data of the
+        // children can then be downscaled and used for this tile later.
         if children_to_traverse != 0b11111111 {
             let incoming_directions = context.get_incoming_directions(coords, level);
             let traversal_directions = all_except(incoming_directions);
@@ -270,7 +275,7 @@ impl Graph {
 
             // if we've hit this point, we know that there's atleast 1 node that has been
             // traversed in this tile. because of this, we know atleast part of
-            // it is visible, so we must mark that accordingly in the results.
+            // it is visible.
 
             let direction_masks = unsafe { context.direction_masks.get_unchecked(level as usize) };
             tile.find_visible_nodes(
@@ -289,7 +294,7 @@ impl Graph {
                 index,
                 coords,
                 level,
-                context.camera_pos_int,
+                context.camera_pos_int.cast::<i16>(),
                 children_to_traverse,
             );
             let child_level = level - 1;
@@ -342,6 +347,7 @@ impl Graph {
 
             // TODO: get rid of this, and find a better way to handle when the camera is
             // inside an non-traversable node
+            #[cfg(debug_assertions)]
             println!(
                 "Camera inside traversable node: {}",
                 self.get_tile(index, level)
@@ -354,21 +360,20 @@ impl Graph {
             let mut combined_incoming_edges = Simd::splat(0);
 
             while incoming_directions != 0 {
-                let direction = take_any(&mut incoming_directions);
+                let direction = take_one(&mut incoming_directions);
 
                 combined_incoming_edges |= self.get_incoming_edge(coords, level, direction);
             }
 
             let tile = self.get_tile(index, level);
 
-            // TODO: is this masking necessary?
             combined_incoming_edges & tile.traversable_nodes.0
         }
     }
 
     fn get_incoming_edge(&mut self, coords: LocalTileCoords, level: u8, direction: u8) -> u8x64 {
-        let neighbor_coords = self.coord_space.step_wrapping(coords, direction, level);
-        let neighbor_index = self.coord_space.pack_index(neighbor_coords);
+        let neighbor_coords = self.coord_space.step(coords, direction);
+        let neighbor_index = self.coord_space.pack_index(neighbor_coords, level);
         let neighbor_tile = self.get_tile(neighbor_index, level);
         let neighbor_traversal_status = neighbor_tile.traversal_status;
 
@@ -394,15 +399,17 @@ impl Graph {
         }
         .0;
 
-        match direction {
-            NEG_X => NodeStorage::edge_neg_to_pos_x(neighbor_traversed_nodes),
-            NEG_Y => NodeStorage::edge_neg_to_pos_y(neighbor_traversed_nodes),
-            NEG_Z => NodeStorage::edge_neg_to_pos_z(neighbor_traversed_nodes),
-            POS_X => NodeStorage::edge_pos_to_neg_x(neighbor_traversed_nodes),
-            POS_Y => NodeStorage::edge_pos_to_neg_y(neighbor_traversed_nodes),
-            POS_Z => NodeStorage::edge_pos_to_neg_z(neighbor_traversed_nodes),
+        let result = match direction {
+            NEG_X => NodeStorage::edge_pos_to_neg_x(neighbor_traversed_nodes),
+            NEG_Y => NodeStorage::edge_pos_to_neg_y(neighbor_traversed_nodes),
+            NEG_Z => NodeStorage::edge_pos_to_neg_z(neighbor_traversed_nodes),
+            POS_X => NodeStorage::edge_neg_to_pos_x(neighbor_traversed_nodes),
+            POS_Y => NodeStorage::edge_neg_to_pos_y(neighbor_traversed_nodes),
+            POS_Z => NodeStorage::edge_neg_to_pos_z(neighbor_traversed_nodes),
             _ => unsafe { unreachable_unchecked() },
-        }
+        };
+
+        result
     }
 
     fn get_traversed_nodes_down(
@@ -411,12 +418,13 @@ impl Graph {
         level: u8,
         edge_mask: u8,
     ) -> NodeStorage {
+        #[cfg(debug_assertions)]
         println!("Traversed Down - Level {:?} Index: {:?}", level, index.0);
 
         let tile = self.get_tile(index, level);
 
-        // stop downward traversal for empty nodes, the children are likely left
-        // unpopulated
+        // stop downward traversal for empty nodes, as their children should also be
+        // empty
         if tile.is_empty() {
             return NodeStorage::EMPTY;
         }
@@ -466,6 +474,7 @@ impl Graph {
         let parent_tile = self.get_tile(parent_index, parent_level);
         let parent_traversal_status = parent_tile.traversal_status;
 
+        #[cfg(debug_assertions)]
         println!(
             "Traversed Up - Level {:?} Index: {:?} Parent Index: {}",
             level, index.0, parent_index.0
@@ -490,6 +499,8 @@ impl Graph {
     }
 
     fn get_tile_mut(&mut self, index: LocalTileIndex, level: u8) -> &mut Tile {
+        debug_assert!(level <= Graph::HIGHEST_LEVEL, "Level {level} out of bounds");
+
         unsafe {
             self.tile_levels
                 .get_unchecked_mut(level as usize)
@@ -498,6 +509,8 @@ impl Graph {
     }
 
     fn get_tile(&self, index: LocalTileIndex, level: u8) -> &Tile {
+        debug_assert!(level <= Graph::HIGHEST_LEVEL, "Level {level} out of bounds");
+
         unsafe {
             self.tile_levels
                 .get_unchecked(level as usize)
@@ -508,67 +521,120 @@ impl Graph {
     // TODO: should this reset the traversal status of the nodes it affects? that'll
     // get reset anyway, right?
     pub fn set_section(&mut self, section_coords: i32x3, traversable_block_bytes: &[u8; 512]) {
+        #[cfg(debug_assertions)]
+        println!("Set Section - Coords: {:?}", section_coords);
+
         let level_1_coords = self.coord_space.section_to_local_coords(section_coords);
-        let level_1_index = self.coord_space.pack_index(level_1_coords);
-        let parent_index_high_bits = level_1_index.to_child_level().0;
+        let level_1_index = self.coord_space.pack_index(level_1_coords, 1);
+        let level_0_index_high_bits = level_1_index.to_child_level().0;
 
-        let mut level_1_children = 0;
+        let level_1_tile = self.get_tile_mut(level_1_index, 1);
+        let level_1_prev_traversable_nodes = level_1_tile.traversable_nodes;
+        let level_1_prev_traversable_blocks_count = level_1_tile.traversable_blocks_count;
+        let level_1_prev_children_to_traverse = level_1_tile.children_to_traverse;
 
-        for (level_1_child, tile_bytes) in traversable_block_bytes.chunks_exact(64).enumerate() {
-            let level_0_index = LocalTileIndex(parent_index_high_bits | level_1_child as u32);
+        let mut level_1_children_to_traverse = 0;
+        let mut level_1_traversable_blocks_count = 0;
+
+        for (child_octant, tile_bytes) in traversable_block_bytes.chunks_exact(64).enumerate() {
+            let level_0_index = LocalTileIndex(level_0_index_high_bits | child_octant as u32);
+            let level_0_tile = self.get_tile_mut(level_0_index, 0);
+
             let level_0_traversable_nodes = NodeStorage(u8x64::from_slice(tile_bytes));
+            let level_0_traversable_blocks_count = level_0_traversable_nodes.population() as u32;
 
-            let level_0_tile = &mut self.tile_levels[0][level_0_index.to_usize()];
             level_0_tile.traversable_nodes = level_0_traversable_nodes;
+            // nothing currently uses this for level 0 nodes
+            level_0_tile.traversable_blocks_count = level_0_traversable_blocks_count;
+            level_1_traversable_blocks_count += level_0_traversable_blocks_count;
 
-            let level_1_tile = &mut self.tile_levels[1][level_1_index.to_usize()];
-            let level_1_traverse_child = level_1_tile
+            let level_1_tile = self.get_tile_mut(level_1_index, 1);
+            let downscaled_population = level_1_tile
                 .traversable_nodes
-                .downscale_to_octant(level_0_traversable_nodes, level_1_child as u8);
+                .downscale_to_octant(level_0_traversable_nodes, child_octant as u8);
 
-            level_1_children |= (level_1_traverse_child as u8) << level_1_child;
+            let should_traverse =
+                Tile::should_traverse(0, level_0_traversable_blocks_count, downscaled_population);
+            level_1_children_to_traverse |= (should_traverse as u8) << child_octant;
         }
 
-        let level_1_tile = &mut self.tile_levels[1][level_1_index.to_usize()];
-        level_1_tile.children_to_traverse = level_1_children;
+        let level_1_tile = self.get_tile_mut(level_1_index, 1);
+        level_1_tile.children_to_traverse = level_1_children_to_traverse;
+        // nothing currently uses this for level 1 nodes
+        level_1_tile.traversable_blocks_count = level_1_traversable_blocks_count;
 
         let level_1_traversable_nodes = level_1_tile.traversable_nodes;
 
-        self.propagate_traversable_nodes_up(level_1_index, level_1_traversable_nodes, 1);
+        if level_1_traversable_nodes != level_1_prev_traversable_nodes
+            || level_1_children_to_traverse != level_1_prev_children_to_traverse
+        {
+            let level_1_needs_traversal = level_1_children_to_traverse != 0;
+            self.propagate_tile_change_up(
+                level_1_index,
+                1,
+                level_1_traversable_nodes,
+                level_1_prev_traversable_blocks_count,
+                level_1_traversable_blocks_count,
+                level_1_needs_traversal,
+            );
+        }
     }
 
-    pub fn propagate_traversable_nodes_up(
+    pub fn propagate_tile_change_up(
         &mut self,
         index: LocalTileIndex,
-        traversable_nodes: NodeStorage,
         level: u8,
+        traversable_nodes: NodeStorage,
+        prev_traversable_blocks_count: u32,
+        traversable_blocks_count: u32,
+        needs_traversal: bool,
     ) {
-        let parent_level = level + 1;
-        let parent_index = index.to_parent_level();
+        #[cfg(debug_assertions)]
+        println!("Propagate Section - Index: {0}, {0:#b}", index.0);
+
         let child_octant = index.child_octant();
+        let parent_index = index.to_parent_level();
+        let parent_level = level + 1;
         let parent_tile = self.get_tile_mut(parent_index, parent_level);
-        let should_traverse_child = parent_tile
+
+        let parent_prev_traversable_blocks_count = parent_tile.traversable_blocks_count;
+        let parent_traversable_blocks_count = parent_prev_traversable_blocks_count
+            - prev_traversable_blocks_count
+            + traversable_blocks_count;
+        parent_tile.traversable_blocks_count = parent_traversable_blocks_count;
+
+        let parent_prev_traversable_nodes = parent_tile.traversable_nodes;
+        let downscaled_population = parent_tile
             .traversable_nodes
             .downscale_to_octant(traversable_nodes, child_octant);
-        // clear slot in children to traverse, then set it to the value returned by the
-        // downscale
-        parent_tile.children_to_traverse &= !(0b1 << child_octant);
-        parent_tile.children_to_traverse |= (should_traverse_child as u8) << child_octant;
+        let parent_traversable_nodes = parent_tile.traversable_nodes;
 
-        if parent_level < Self::HIGHEST_LEVEL {
-            let parent_traversable_nodes = parent_tile.traversable_nodes;
+        let parent_prev_children_to_traverse = parent_tile.children_to_traverse;
+        let should_traverse = needs_traversal
+            || Tile::should_traverse(level, traversable_blocks_count, downscaled_population);
+        modify_bit(
+            &mut parent_tile.children_to_traverse,
+            child_octant,
+            should_traverse,
+        );
 
-            self.propagate_traversable_nodes_up(
+        if parent_level < Self::HIGHEST_LEVEL
+            && (parent_traversable_nodes != parent_prev_traversable_nodes
+                || parent_tile.children_to_traverse != parent_prev_children_to_traverse)
+        {
+            let parent_needs_traversal = parent_tile.children_to_traverse != 0;
+            self.propagate_tile_change_up(
                 parent_index,
-                parent_traversable_nodes,
                 parent_level,
+                parent_traversable_nodes,
+                parent_prev_traversable_blocks_count,
+                parent_traversable_blocks_count,
+                parent_needs_traversal,
             );
         }
     }
 
     pub fn remove_section(&mut self, section_coord: i32x3) {
-        // TODO: a removed section should be fully opaque to prevent traversal (maybe
-        // don't do this? hm.)
         // TODO: write this directly to just set the tiles to Default::default()
         // TODO: can the level 0 nodes just be kept the same, and the level 1 children
         // just be toggled off?

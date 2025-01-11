@@ -18,8 +18,6 @@ impl NodeStorage {
     pub const EMPTY: Self = Self(Simd::splat(0));
     pub const FILLED: Self = Self(Simd::splat(0xFF));
 
-    const EXTRAPOLATION_THRESHOLD: f32 = 1.2;
-
     pub fn index(x: u8, y: u8, z: u8) -> u16 {
         debug_assert!(x < 8);
         debug_assert!(y < 8);
@@ -45,9 +43,8 @@ impl NodeStorage {
         *byte |= (value as u8) << bit_idx;
     }
 
-    // Returns whether a child node downscaled in this way should be processed. This
-    // case happens when the downscaled data is deemed too inaccurate to use.
-    pub fn downscale_to_octant(&mut self, src: Self, dst_octant: u8) -> bool {
+    // Returns the amount of bits set in the downscaled data
+    pub fn downscale_to_octant(&mut self, src: Self, dst_octant: u8) -> u8 {
         let src_pairs_mask = simd_swizzle!(
             u8x4::from_array([0b00000011, 0b00001100, 0b00110000, 0b11000000]),
             [
@@ -149,18 +146,7 @@ impl NodeStorage {
 
         let downscaled_population = set_cubes.count_ones() as u8;
 
-        // this covers the divide-by-0 case, because downscaled_population can only be 0
-        // when original_population is 0
-        if downscaled_population == 0 {
-            true
-        } else {
-            let original_population = src.population() as u16;
-
-            // the downscaled version will always have 1/8th of the data, so we have to
-            // factor that in in our comparison.
-            (downscaled_population as f32 / original_population as f32)
-                < const { Self::EXTRAPOLATION_THRESHOLD / 8.0 }
-        }
+        downscaled_population
     }
 
     pub fn upscale_octant(self, src_octant: u8) -> Self {
@@ -228,7 +214,7 @@ impl NodeStorage {
     }
 
     // LLVM seems to auto-vectorize this function with good results on x86
-    fn population(self) -> u16 {
+    pub fn population(self) -> u16 {
         // we transmute the struct directly because of its strict alignment requirements
         let u64_vec: u64x8 = unsafe { transmute(self) };
 
@@ -487,8 +473,11 @@ pub struct Tile {
     pub traversable_nodes: NodeStorage,
     // There are 8 possible child nodes, each bit represents a child.
     // Indices are formatted as XYZ.
-    // Not necessary on level 0, possibly remove this?
+    // Not necessary on level 0.
     pub children_to_traverse: u8,
+
+    // this is used to determine whether a tile should be traversed
+    pub traversable_blocks_count: u32,
 
     pub traversal_status: TraversalStatus,
     pub traversed_nodes: NodeStorage,
@@ -499,29 +488,28 @@ pub struct Tile {
 pub enum TraversalStatus {
     Uninitialized,
     Processed { children_upmipped: u8 },
-
-    // for this to be worth using, the skipped status needs to be propagated down immediately (i
-    // think?). when a tile is marked as skipped, the contents of the first byte will either
-    // be all 0s or all 1s.
-    //
-    // Skipped,
     Downmipped,
 }
 
 impl Default for Tile {
     fn default() -> Self {
         Self {
+            // fully traversable by default
+            // TODO: this should probably be fully untraversable by default?
+            traversable_nodes: NodeStorage::FILLED,
+            children_to_traverse: 0,
+            traversable_blocks_count: 0,
+            traversal_status: TraversalStatus::Uninitialized,
             traversed_nodes: NodeStorage::EMPTY,
             visible_nodes: NodeStorage::EMPTY,
-            // visibility fully blocked by default
-            traversable_nodes: NodeStorage::EMPTY,
-            children_to_traverse: 0,
-            traversal_status: TraversalStatus::Uninitialized,
         }
     }
 }
 
 impl Tile {
+    // can be a number between 1.0 and 8.0
+    const EXTRAPOLATION_THRESHOLD: f32 = 1.5;
+
     pub fn is_empty(&self) -> bool {
         self.traversed_nodes == NodeStorage::EMPTY
     }
@@ -578,16 +566,16 @@ impl Tile {
         // we need to add direction-specific masks when there are pairs of opposing
         // directions
         if use_x_mask {
-            neg_x_combined_mask |= neg_x_mask;
-            pos_x_combined_mask |= pos_x_mask;
+            neg_x_combined_mask &= neg_x_mask;
+            pos_x_combined_mask &= pos_x_mask;
         }
         if use_y_mask {
-            neg_y_combined_mask |= neg_y_mask;
-            pos_y_combined_mask |= pos_y_mask;
+            neg_y_combined_mask &= neg_y_mask;
+            pos_y_combined_mask &= pos_y_mask;
         }
         if use_z_mask {
-            neg_z_combined_mask |= neg_z_mask;
-            pos_z_combined_mask |= pos_z_mask;
+            neg_z_combined_mask &= neg_z_mask;
+            pos_z_combined_mask &= pos_z_mask;
         }
 
         let mut traversed_nodes = incoming_traversed_nodes;
@@ -685,5 +673,23 @@ impl Tile {
         }
 
         self.visible_nodes = NodeStorage(visible_nodes);
+    }
+
+    pub fn should_traverse(
+        level: u8,
+        traversable_blocks_count: u32,
+        downscaled_population: u8,
+    ) -> bool {
+        // the divide-by-0 cases are covered here
+        if downscaled_population == 0 {
+            false
+        } else if traversable_blocks_count == 0 {
+            true
+        } else {
+            let scaled_blocks_count = (downscaled_population as u32) << (3 * (level + 1));
+
+            (scaled_blocks_count as f32 / traversable_blocks_count as f32)
+                > Self::EXTRAPOLATION_THRESHOLD
+        }
     }
 }

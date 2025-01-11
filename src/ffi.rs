@@ -17,14 +17,14 @@ type JClass = core::ffi::c_void;
 
 #[repr(C)]
 pub struct FFISlice<T> {
-    count: u32,
+    count: usize,
     data_ptr: *const T,
 }
 
 impl<T> From<&[T]> for FFISlice<T> {
     fn from(value: &[T]) -> Self {
         Self {
-            count: value.len().try_into().expect("len is not a valid u32"),
+            count: value.len(),
             data_ptr: value.as_ptr(),
         }
     }
@@ -146,6 +146,7 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
     search_distance: f32,
     use_occlusion_culling: bool,
 ) {
+    #[cfg(debug_assertions)]
     println!("start search --------------------------");
 
     let graph = graph_ptr
@@ -173,15 +174,6 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
     );
 
     graph.cull(&context);
-
-    let mut sum: u32 = 0;
-    for tile in &graph.visible_tiles {
-        for part in *tile.visible_sections_ptr {
-            sum += part.count_ones();
-        }
-    }
-
-    println!("Visible Sections: {}", sum);
 
     *return_value_ptr = graph.visible_tiles.as_slice().into();
 }
