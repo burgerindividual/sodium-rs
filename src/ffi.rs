@@ -17,8 +17,8 @@ type JClass = core::ffi::c_void;
 
 #[repr(C)]
 pub struct FFISlice<T> {
-    count: usize,
-    data_ptr: *const T,
+    pub count: usize,
+    pub data_ptr: *const T,
 }
 
 impl<T> From<&[T]> for FFISlice<T> {
@@ -32,24 +32,24 @@ impl<T> From<&[T]> for FFISlice<T> {
 
 #[repr(C)]
 pub struct FFICamera {
-    frustum_planes: [[f32; 6]; 4],
-    pos: [f64; 3],
+    pub frustum_planes: [[f32; 6]; 4],
+    pub pos: [f64; 3],
 }
 
 #[repr(C)]
-pub struct FFISectionTraversableBlocks([u8; 512]);
+pub struct FFISectionTraversableBlocks(pub [u8; 512]);
 
 #[repr(C)]
 pub struct FFIVisibleSectionsTile {
-    visible_sections_ptr: *const [u64; 8],
-    origin_section_coords: [i32; 3],
+    pub origin_section_coords: [i32; 3],
+    pub visible_sections_ptr: *const [u64; 8],
 }
 
 impl FFIVisibleSectionsTile {
-    pub fn new(visible_sections: *const NodeStorage, origin_section_coords: i32x3) -> Self {
+    pub fn new(origin_section_coords: i32x3, visible_sections: *const NodeStorage) -> Self {
         Self {
-            visible_sections_ptr: visible_sections.cast::<[u64; 8]>(),
             origin_section_coords: origin_section_coords.to_array(),
+            visible_sections_ptr: visible_sections.cast::<[u64; 8]>(),
         }
     }
 }

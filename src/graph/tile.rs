@@ -471,13 +471,13 @@ impl NodeStorage {
 #[derive(Debug)]
 pub struct Tile {
     pub traversable_nodes: NodeStorage,
-    // There are 8 possible child nodes, each bit represents a child.
-    // Indices are formatted as XYZ.
-    // Not necessary on level 0.
-    pub children_to_traverse: u8,
+    pub should_traverse_children: bool,
 
     // this is used to determine whether a tile should be traversed
     pub traversable_blocks_count: u32,
+
+    // the last timestamp where either traversal_status, traversed_nodes, or visible_nodes changed
+    pub last_change_timestamp: u64,
 
     pub traversal_status: TraversalStatus,
     pub traversed_nodes: NodeStorage,
@@ -487,7 +487,7 @@ pub struct Tile {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TraversalStatus {
     Uninitialized,
-    Processed { children_upmipped: u8 },
+    Processed { children_traversal_upmipped: u8 },
     Downmipped,
 }
 
@@ -497,8 +497,9 @@ impl Default for Tile {
             // fully traversable by default
             // TODO: this should probably be fully untraversable by default?
             traversable_nodes: NodeStorage::FILLED,
-            children_to_traverse: 0,
+            should_traverse_children: false,
             traversable_blocks_count: 0,
+            last_change_timestamp: 0,
             traversal_status: TraversalStatus::Uninitialized,
             traversed_nodes: NodeStorage::EMPTY,
             visible_nodes: NodeStorage::EMPTY,
@@ -518,6 +519,17 @@ impl Tile {
         self.traversed_nodes = NodeStorage::EMPTY;
         self.visible_nodes = NodeStorage::EMPTY;
     }
+
+    pub fn clear_if_outdated(&mut self, current_timestamp: u64) {
+        if self.last_change_timestamp != current_timestamp {
+            self.last_change_timestamp = current_timestamp;
+            self.traversal_status = TraversalStatus::Uninitialized;
+            self.set_empty();
+        }
+    }
+
+    // TODO: make getters and setters for the traversed nodes and traversal status?
+    // maybe?
 
     // TODO: make sure this is sound with up and downscaling
     // TODO: review all fast paths

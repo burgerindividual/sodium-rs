@@ -1,13 +1,10 @@
 #![cfg(test)]
 
-use std::collections::HashSet;
-
 use core_simd::simd::*;
-use num::SimdUint;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
-use crate::graph::coords::{GraphCoordSpace, LocalTileCoords, SortedChildIterator};
+use crate::graph::coords::{GraphCoordSpace, LocalTileCoords};
 use crate::graph::direction::*;
 use crate::graph::tile::NodeStorage;
 use crate::math::Coords3;
@@ -15,7 +12,7 @@ use crate::math::Coords3;
 const RANDOM_SEED: u64 = 8427234087098706983;
 
 // #[test]
-// fn pack_local_tile_index() {
+// fn pack_tile_index() {
 //     for x in 0..=255 {
 //         for y in 0..=255 {
 //             for z in 0..=255 {
@@ -362,42 +359,6 @@ fn edge_move_test() {
     }
 }
 
-// TODO: actually test the order here
-#[test]
-fn sorted_iter_test() {
-    let coord_space = GraphCoordSpace::new(6, 6, 6, -4, 19);
-    let coords = LocalTileCoords(Simd::from_xyz(10, 15, 31));
-    let level = 1;
-    let index = coord_space.pack_index(coords, level);
-    let camera_block_coords = coord_space.block_to_local_coords(Simd::from_xyz(10, 30, 50));
-    let children_present = 0b10101111;
-    let child_level = level - 1;
-
-    let mut sorted_indices = HashSet::new();
-    let mut unsorted_indices = HashSet::new();
-
-    let iter_sorted = SortedChildIterator::new(
-        index,
-        coords,
-        level,
-        camera_block_coords.cast::<i16>(),
-        children_present,
-    );
-    for (child_index, child_coords) in iter_sorted {
-        let calculated_child_index = coord_space.pack_index(child_coords, child_level);
-        assert_eq!(calculated_child_index, child_index);
-        println!("{:?} {:?}", child_coords, child_index);
-        sorted_indices.insert(child_index);
-    }
-
-    let iter_unsorted = index.unordered_child_iter(children_present);
-    for child_index in iter_unsorted {
-        unsorted_indices.insert(child_index);
-    }
-
-    assert_eq!(sorted_indices, unsorted_indices);
-}
-
 // TODO: make this automatic
 #[test]
 fn step_test() {
@@ -412,14 +373,5 @@ fn step_test() {
     }
 }
 
-#[test]
-fn hmm_test() {
-    let coord_space = GraphCoordSpace::new(4, 6, 4, -4, 19);
-    let coords = LocalTileCoords(Simd::from_xyz(9, 23, 8));
-    let stepped = coord_space.step(coords, POS_Z);
-    let stepped_index = coord_space.pack_index(stepped, 0);
-    println!("{:#026b}", stepped_index.0);
-}
-
 // TODO: test clearing the graph, test searching traversed nodes, test axis and
-// plane masks
+// plane masks, test sorted child iterator, test packing indices

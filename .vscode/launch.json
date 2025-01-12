@@ -9,6 +9,12 @@
             // replace this with the directory of your native
             "program": "/home/ryan/Documents/projects/sodium-burger/common/src/main/resources/assets/sodium/natives/libnative_cull.so",
             "MIMode": "gdb",
+            "sourceFileMap": {
+                "${workspaceRoot}": {
+                    "editorPath": "${workspaceRoot}",
+                    "useForBreakpoints": true
+                }
+            },
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",

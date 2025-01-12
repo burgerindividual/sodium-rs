@@ -268,35 +268,33 @@ impl LocalTileIndex {
         self.0 as u8 & 0b111
     }
 
-    pub fn unordered_child_iter(self, children_present: u8) -> UnorderedChildIter {
-        UnorderedChildIter::new(self, children_present)
+    pub fn unordered_child_iter(self) -> CountingChildIter {
+        CountingChildIter::new(self)
     }
 }
 
-pub struct UnorderedChildIter {
+pub struct CountingChildIter {
     parent_index_high_bits: u32,
-    children_present: u8,
+    current_child_octant: u8,
 }
 
-impl UnorderedChildIter {
-    pub fn new(index: LocalTileIndex, children_present: u8) -> Self {
+impl CountingChildIter {
+    pub fn new(index: LocalTileIndex) -> Self {
         Self {
             parent_index_high_bits: index.to_child_level().0,
-            children_present,
+            current_child_octant: 0,
         }
     }
 }
 
-impl Iterator for UnorderedChildIter {
+impl Iterator for CountingChildIter {
     type Item = LocalTileIndex;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Description of the iteration approach on daniel lemire's blog
-        // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly/
-        if self.children_present != 0 {
-            let child_octant = self.children_present.trailing_zeros();
-            self.children_present &= self.children_present - 1;
-            let child_index = LocalTileIndex(self.parent_index_high_bits | child_octant);
+        if self.current_child_octant < 8 {
+            let child_index =
+                LocalTileIndex(self.parent_index_high_bits | self.current_child_octant as u32);
+            self.current_child_octant += 1;
             Some(child_index)
         } else {
             None
@@ -304,8 +302,9 @@ impl Iterator for UnorderedChildIter {
     }
 }
 
-pub struct SortedChildIterator {
-    children_present: u8,
+pub struct PosSortedChildIterator {
+    iter_count: u8,
+
     sorted_child_octants: u32,
     // this would fit in a u8x3, but keeping the elements as u16 makes some things faster
     sorted_child_octant_coords: u16x3,
@@ -314,13 +313,12 @@ pub struct SortedChildIterator {
     parent_coords_high_bits: i16x3,
 }
 
-impl SortedChildIterator {
+impl PosSortedChildIterator {
     pub fn new(
         index: LocalTileIndex,
         coords: LocalTileCoords,
         level: u8,
         camera_block_coords: i16x3,
-        children_present: u8,
     ) -> Self {
         let parent_index_high_bits = index.to_child_level().0;
         let parent_coords_high_bits = coords.to_child_level().0;
@@ -353,7 +351,7 @@ impl SortedChildIterator {
             ]);
 
         Self {
-            children_present,
+            iter_count: 0,
             sorted_child_octants,
             sorted_child_octant_coords,
             parent_index_high_bits,
@@ -362,36 +360,24 @@ impl SortedChildIterator {
     }
 }
 
-impl Iterator for SortedChildIterator {
+impl Iterator for PosSortedChildIterator {
     // We return both the indices and coordinates because it's easy to calculate
     // both at once
     type Item = (LocalTileIndex, LocalTileCoords);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.children_present != 0 {
-            let mut child_found = false;
-            let mut child_octant = 0;
-            let mut child_octant_coords = Simd::splat(0);
-
-            while !child_found {
-                child_octant = self.sorted_child_octants & 0b111;
-                child_octant_coords = self.sorted_child_octant_coords & Simd::splat(0b1);
-                // pop child octant from list of octants by shifting it out of bounds
-                self.sorted_child_octants >>= 3;
-                self.sorted_child_octant_coords >>= Simd::splat(1);
-
-                let child_mask_bit = 1 << child_octant;
-
-                child_found = self.children_present & child_mask_bit != 0;
-                // mark current child as no longer present, as we're currently iterating it.
-                // if the current child wasn't present, this does nothing.
-                self.children_present &= !child_mask_bit;
-            }
+        if self.iter_count < 8 {
+            let child_octant = self.sorted_child_octants & 0b111;
+            let child_octant_coords = self.sorted_child_octant_coords & Simd::splat(0b1);
 
             let child_index = LocalTileIndex(self.parent_index_high_bits | child_octant);
             let child_coords =
                 LocalTileCoords(self.parent_coords_high_bits | child_octant_coords.cast::<i16>());
 
+            // pop child octant from list of octants by shifting it out of bounds
+            self.sorted_child_octants >>= 3;
+            self.sorted_child_octant_coords >>= Simd::splat(1);
+            self.iter_count += 1;
             Some((child_index, child_coords))
         } else {
             None

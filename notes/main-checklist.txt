@@ -115,6 +115,8 @@ I am not deleting these because I'd like to archive the thought process behind h
       as downscaling wouldn't work for edges it needs.
     - Move these thoughts somewhere else
 
+[ ] Make panic formatting better, consider using regex: "\s*[0-9]+: (.*?)\R\s*at (.*):([0-9]+):[0-9]+\R"gm
+
 LATER:
 [ ] Multiversioning
 
@@ -127,7 +129,7 @@ LATER:
 
 [ ] Fast Paths for Simple Tiles
 
-[ ] Smarter version of Graph.clear
+[x] Smarter version of Graph.clear
     - maybe add a "last traversed timestamp" to each tile, which is checked on access. this could
       be based off a static AtomicU32 which is incremented on every call to the graph search. the
       current timestamp can be stored in the GraphSearchContext

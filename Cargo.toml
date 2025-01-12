@@ -27,11 +27,10 @@ lto = "fat"
 codegen-units = 1
 strip = "debuginfo"
 
-# [profile.asm]
-# inherits = "release"
-# strip = false
-# debug = true
-# lto = "off"
+[profile.releasedebug]
+inherits = "release"
+strip = false
+debug = true
 
 [profile.minsize]
 inherits = "release"
