@@ -6,8 +6,7 @@ use crate::graph::*;
 pub struct GraphSearchContext {
     frustum: LocalFrustum,
 
-    // pub global_region_offset: i32x3,
-    pub global_section_offset: i32x3,
+    pub global_tile_offset: i32x3,
 
     fog_distance: f32,
 
@@ -17,13 +16,15 @@ pub struct GraphSearchContext {
     pub camera_pos_int: u16x3,
     pub camera_pos_frac: f32x3,
 
-    pub iter_start_tile: LocalTileCoords,
+    pub camera_section_in_tile: u8x3,
+
+    pub camera_tile_coords: LocalTileCoords,
     pub direction_step_counts: u8x6,
 
     // TODO: actually use this
     pub use_occlusion_culling: bool,
 
-    pub direction_masks: [[u8x64; 6]; 5],
+    pub camera_direction_masks: [u8x64; DIRECTION_COUNT],
 }
 
 impl GraphSearchContext {
@@ -50,23 +51,24 @@ impl GraphSearchContext {
         let global_camera_pos_int = unsafe { global_camera_pos_floor.to_int_unchecked::<i32>() };
 
         let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
-        let global_section_offset =
-            (global_camera_pos_int - camera_pos_int.cast::<i32>()) >> Simd::splat(4);
-        let iter_start_pos = camera_pos_int >> Simd::splat(7);
+        let global_tile_offset =
+            (global_camera_pos_int - camera_pos_int.cast::<i32>()) >> Simd::splat(7);
+        let camera_tile_coords = (camera_pos_int >> Simd::splat(7)).cast::<u8>();
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
         let positive_step_counts = unsafe {
             ((camera_pos + Simd::splat(search_distance)).to_int_unchecked::<u16>()
                 >> Simd::splat(7))
-                - iter_start_pos
+            .cast::<u8>()
+                - camera_tile_coords
         };
         // we cast from f32 to i16 to u16 here. this is to allow underflowing, as we
         // want an underflow to
         let negative_step_counts = unsafe {
-            iter_start_pos
+            camera_tile_coords
                 - ((camera_pos - Simd::splat(search_distance)).to_int_unchecked::<i16>()
                     >> Simd::splat(7))
-                .cast::<u16>()
+                .cast::<u8>()
         };
 
         let direction_step_counts = simd_swizzle!(
@@ -75,16 +77,20 @@ impl GraphSearchContext {
             [0, 1, 2, 3, 4, 5,],
         );
 
+        let camera_section_in_tile =
+            (camera_pos_int >> Simd::splat(4)).cast::<u8>() & Simd::splat(0b111);
+
         Self {
             frustum,
-            global_section_offset,
+            global_tile_offset,
             fog_distance: search_distance,
             camera_pos_int,
             camera_pos_frac,
-            iter_start_tile: LocalTileCoords(iter_start_pos.cast::<i16>()),
+            camera_section_in_tile,
+            camera_tile_coords: LocalTileCoords(camera_tile_coords.cast::<i8>()),
             direction_step_counts,
             use_occlusion_culling,
-            direction_masks: NodeStorage::create_direction_masks(camera_pos_int),
+            camera_direction_masks: tile::create_camera_direction_masks(camera_section_in_tile),
         }
     }
 
@@ -92,43 +98,27 @@ impl GraphSearchContext {
         &self,
         coord_space: &GraphCoordSpace,
         coords: LocalTileCoords,
-        level: u8,
-        parent_test_results: CombinedTestResults,
+        do_height_checks: bool,
     ) -> CombinedTestResults {
-        let mut lazy_relative_bounds = Option::None;
-
         let mut results = CombinedTestResults::ALL_INSIDE;
 
-        if level >= Graph::EARLY_CHECKS_LOWEST_LEVEL
-            && parent_test_results.is_partial::<{ CombinedTestResults::FRUSTUM_BIT }>()
-        {
-            let relative_bounds = *lazy_relative_bounds
-                .get_or_insert_with(|| self.tile_get_relative_bounds(coords, level));
+        let relative_bounds = self.tile_get_relative_bounds(coords);
 
-            self.frustum.test_box(relative_bounds, &mut results);
+        self.frustum.test_box(relative_bounds, &mut results);
 
-            if results == CombinedTestResults::OUTSIDE {
-                // early exit
-                return results;
-            }
+        if results == CombinedTestResults::OUTSIDE {
+            // early exit
+            return results;
+        }
+        self.bounds_inside_fog(relative_bounds, &mut results);
+
+        if results == CombinedTestResults::OUTSIDE {
+            // early exit
+            return results;
         }
 
-        if level >= Graph::EARLY_CHECKS_LOWEST_LEVEL
-            && parent_test_results.is_partial::<{ CombinedTestResults::FOG_BIT }>()
-        {
-            let relative_bounds = *lazy_relative_bounds
-                .get_or_insert_with(|| self.tile_get_relative_bounds(coords, level));
-
-            self.bounds_inside_fog(relative_bounds, &mut results);
-
-            if results == CombinedTestResults::OUTSIDE {
-                // early exit
-                return results;
-            }
-        }
-
-        if parent_test_results.is_partial::<{ CombinedTestResults::HEIGHT_BIT }>() {
-            self.bounds_inside_world_height(coord_space, coords, level, &mut results);
+        if do_height_checks {
+            self.bounds_inside_world_height(coord_space, coords, &mut results);
         }
 
         results
@@ -138,14 +128,13 @@ impl GraphSearchContext {
         &self,
         coord_space: &GraphCoordSpace,
         coords: LocalTileCoords,
-        level: u8,
         results: &mut CombinedTestResults,
     ) {
-        let node_min_y = coords.y() as u32;
-        let node_max_y = node_min_y + (1 << level) - 1;
-        let world_max_y = coord_space.world_top_section_y as u32;
+        let tile_min_y = coords.y();
+        let tile_max_y = tile_min_y + LocalTileCoords::LENGTH_IN_SECTIONS as i8 - 1;
+        let world_max_y = coord_space.world_top_section_y;
 
-        let min_out_of_bounds = node_min_y > world_max_y;
+        let min_out_of_bounds = tile_min_y > world_max_y;
 
         if min_out_of_bounds {
             // early exit
@@ -153,7 +142,7 @@ impl GraphSearchContext {
             return;
         }
 
-        let max_out_of_bounds = node_max_y > world_max_y;
+        let max_out_of_bounds = tile_max_y > world_max_y;
 
         results.set_partial::<{ CombinedTestResults::HEIGHT_BIT }>(max_out_of_bounds);
     }
@@ -203,27 +192,13 @@ impl GraphSearchContext {
         results.set_partial::<{ CombinedTestResults::FOG_BIT }>(outside_fog_mask.test(1));
     }
 
-    fn tile_get_relative_bounds(&self, coords: LocalTileCoords, level: u8) -> RelativeBoundingBox {
-        let pos_int =
-            coords.to_block_coords(level).cast::<i16>() - self.camera_pos_int.cast::<i16>();
+    fn tile_get_relative_bounds(&self, coords: LocalTileCoords) -> RelativeBoundingBox {
+        let pos_int = coords.to_local_block_coords() - self.camera_pos_int.cast::<i16>();
         let pos_float = pos_int.cast::<f32>() - self.camera_pos_frac;
 
-        let tile_size = f32x3::splat(LocalTileCoords::block_length(level) as f32);
+        let tile_size = f32x3::splat(LocalTileCoords::LENGTH_IN_BLOCKS as f32);
 
         RelativeBoundingBox::new(pos_float, pos_float + tile_size)
-    }
-
-    pub fn get_incoming_directions(&self, coords: LocalTileCoords, level: u8) -> u8 {
-        unsafe {
-            assert_unchecked(level <= Graph::HIGHEST_LEVEL);
-        }
-        let camera_tile_coords = self.camera_pos_int >> Simd::splat(level as u16 + 3);
-        let coords_difference = coords.0 - camera_tile_coords.cast::<i16>();
-
-        let negative = coords_difference.simd_gt(Simd::splat(0));
-        let positive = coords_difference.simd_lt(Simd::splat(0));
-
-        negative.to_bitmask() as u8 | ((positive.to_bitmask() as u8) << 3)
     }
 
     // TODO OPT: add douira's magic visible directions culler

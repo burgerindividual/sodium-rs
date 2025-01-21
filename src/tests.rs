@@ -1,13 +1,14 @@
 #![cfg(test)]
 
-use core_simd::simd::*;
+use core_simd::simd::prelude::*;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
-use crate::graph::coords::{GraphCoordSpace, LocalTileCoords};
+use crate::bitset::BitSet;
+use crate::graph::coords::LocalTileCoords;
 use crate::graph::direction::*;
-use crate::graph::tile::NodeStorage;
-use crate::math::Coords3;
+use crate::graph::tile::*;
+use crate::math::{u8x3, Coords3};
 
 const RANDOM_SEED: u64 = 8427234087098706983;
 
@@ -28,219 +29,127 @@ const RANDOM_SEED: u64 = 8427234087098706983;
 // }
 
 #[test]
-fn upscale_tile() {
-    const ITERATIONS: u32 = 10000;
-    let mut rand = StdRng::seed_from_u64(RANDOM_SEED);
-
-    for src_octant in 0..8 {
-        for _ in 0..ITERATIONS {
-            let mut src_node_storage = NodeStorage::EMPTY;
-
-            rand.fill_bytes(src_node_storage.0.as_mut_array());
-
-            let quad_x_mod = if src_octant & 0b100 == 0 { 0 } else { 4 };
-            let quad_y_mod = if src_octant & 0b010 == 0 { 0 } else { 4 };
-            let quad_z_mod = if src_octant & 0b001 == 0 { 0 } else { 4 };
-
-            let dst_node_storage = src_node_storage.upscale_octant(src_octant);
-
-            for z in 0..4 {
-                for y in 0..4 {
-                    for x in 0..4 {
-                        let src_idx =
-                            NodeStorage::index(x + quad_x_mod, y + quad_y_mod, z + quad_z_mod);
-                        let src_val = src_node_storage.get_bit(src_idx);
-
-                        for z2 in 0..2 {
-                            for y2 in 0..2 {
-                                for x2 in 0..2 {
-                                    let dst_idx = NodeStorage::index(
-                                        (x * 2) + x2,
-                                        (y * 2) + y2,
-                                        (z * 2) + z2,
-                                    );
-                                    let dst_val = dst_node_storage.get_bit(dst_idx);
-                                    assert_eq!(src_val, dst_val);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn downscale_tile() {
-    const ITERATIONS: u32 = 10000;
-    let mut rand = StdRng::seed_from_u64(RANDOM_SEED);
-
-    for dst_octant in 0..8 {
-        for _ in 0..ITERATIONS {
-            let mut src_node_storage = NodeStorage::EMPTY;
-            let mut dst_node_storage = NodeStorage::EMPTY;
-
-            rand.fill_bytes(src_node_storage.0.as_mut_array());
-            rand.fill_bytes(dst_node_storage.0.as_mut_array());
-
-            let mut dst_node_storage_modified = dst_node_storage;
-
-            dst_node_storage_modified.downscale_to_octant(src_node_storage, dst_octant);
-
-            for z in 0..8 {
-                for y in 0..8 {
-                    for x in 0..8 {
-                        let cur_octant = (x & 0b100) | ((y & 0b100) >> 1) | ((z & 0b100) >> 2);
-                        let dst_idx = NodeStorage::index(x, y, z);
-                        let dst_val_modified = dst_node_storage_modified.get_bit(dst_idx);
-
-                        if cur_octant == dst_octant {
-                            let mut src_val = false;
-                            for z2 in 0..2 {
-                                for y2 in 0..2 {
-                                    for x2 in 0..2 {
-                                        let src_idx = NodeStorage::index(
-                                            ((x & 0b11) * 2) + x2,
-                                            ((y & 0b11) * 2) + y2,
-                                            ((z & 0b11) * 2) + z2,
-                                        );
-                                        src_val |= src_node_storage.get_bit(src_idx);
-                                    }
-                                }
-                            }
-                            assert_eq!(dst_val_modified, src_val,
-                                "Source and Destination don't match at {dst_idx:b}, x: {x} y: {y} z: {z}"
-                            );
-                        } else {
-                            let orig_val_modified = dst_node_storage.get_bit(dst_idx);
-                            assert_eq!(dst_val_modified, orig_val_modified,
-                                "Destination and Original don't match at {dst_idx}, x: {x} y: {y} z: {z}"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
 fn shifts_test() {
     const ITERATIONS: u32 = 10000;
     let mut rand = StdRng::seed_from_u64(RANDOM_SEED);
 
     for _ in 0..ITERATIONS {
-        let mut src = NodeStorage(u8x64::splat(0));
+        let mut src = u8x64::splat(0);
 
-        rand.fill_bytes(src.0.as_mut_array());
+        rand.fill_bytes(src.as_mut_array());
 
         {
-            let mut dst_sane_neg_x = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_neg_x = u8x64::splat(0);
             for z in 0..8 {
                 for y in 0..8 {
                     for x in 1..8 {
-                        dst_sane_neg_x.put_bit(
-                            NodeStorage::index(x - 1, y, z),
-                            src.get_bit(NodeStorage::index(x, y, z)),
+                        modify_bit(
+                            &mut dst_sane_neg_x,
+                            section_index(Simd::from_xyz(x - 1, y, z)),
+                            get_bit(&src, section_index(Simd::from_xyz(x, y, z))),
                         );
                     }
                 }
             }
 
-            let dst_test_neg_x = NodeStorage::shift_neg_x(src.0);
+            let dst_test_neg_x = shift_neg_x(src);
 
-            assert_eq!(dst_sane_neg_x.0, dst_test_neg_x);
+            assert_eq!(dst_sane_neg_x, dst_test_neg_x);
         }
 
         {
-            let mut dst_sane_pos_x = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_pos_x = u8x64::splat(0);
             for z in 0..8 {
                 for y in 0..8 {
                     for x in 0..7 {
-                        dst_sane_pos_x.put_bit(
-                            NodeStorage::index(x + 1, y, z),
-                            src.get_bit(NodeStorage::index(x, y, z)),
+                        modify_bit(
+                            &mut dst_sane_pos_x,
+                            section_index(Simd::from_xyz(x + 1, y, z)),
+                            get_bit(&src, section_index(Simd::from_xyz(x, y, z))),
                         );
                     }
                 }
             }
 
-            let dst_test_pos_x = NodeStorage::shift_pos_x(src.0);
+            let dst_test_pos_x = shift_pos_x(src);
 
-            assert_eq!(dst_sane_pos_x.0, dst_test_pos_x);
+            assert_eq!(dst_sane_pos_x, dst_test_pos_x);
         }
 
         {
-            let mut dst_sane_neg_y = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_neg_y = u8x64::splat(0);
             for z in 0..8 {
                 for y in 1..8 {
                     for x in 0..8 {
-                        dst_sane_neg_y.put_bit(
-                            NodeStorage::index(x, y - 1, z),
-                            src.get_bit(NodeStorage::index(x, y, z)),
+                        modify_bit(
+                            &mut dst_sane_neg_y,
+                            section_index(Simd::from_xyz(x, y - 1, z)),
+                            get_bit(&src, section_index(Simd::from_xyz(x, y, z))),
                         );
                     }
                 }
             }
 
-            let dst_test_neg_y = NodeStorage::shift_neg_y(src.0);
+            let dst_test_neg_y = shift_neg_y(src);
 
-            assert_eq!(dst_sane_neg_y.0, dst_test_neg_y);
+            assert_eq!(dst_sane_neg_y, dst_test_neg_y);
         }
 
         {
-            let mut dst_sane_pos_y = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_pos_y = u8x64::splat(0);
             for z in 0..8 {
                 for y in 0..7 {
                     for x in 0..8 {
-                        dst_sane_pos_y.put_bit(
-                            NodeStorage::index(x, y + 1, z),
-                            src.get_bit(NodeStorage::index(x, y, z)),
+                        modify_bit(
+                            &mut dst_sane_pos_y,
+                            section_index(Simd::from_xyz(x, y + 1, z)),
+                            get_bit(&src, section_index(Simd::from_xyz(x, y, z))),
                         );
                     }
                 }
             }
 
-            let dst_test_pos_y = NodeStorage::shift_pos_y(src.0);
+            let dst_test_pos_y = shift_pos_y(src);
 
-            assert_eq!(dst_sane_pos_y.0, dst_test_pos_y);
+            assert_eq!(dst_sane_pos_y, dst_test_pos_y);
         }
 
         {
-            let mut dst_sane_neg_z = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_neg_z = u8x64::splat(0);
             for z in 1..8 {
                 for y in 0..8 {
                     for x in 0..8 {
-                        dst_sane_neg_z.put_bit(
-                            NodeStorage::index(x, y, z - 1),
-                            src.get_bit(NodeStorage::index(x, y, z)),
+                        modify_bit(
+                            &mut dst_sane_neg_z,
+                            section_index(Simd::from_xyz(x, y, z - 1)),
+                            get_bit(&src, section_index(Simd::from_xyz(x, y, z))),
                         );
                     }
                 }
             }
 
-            let dst_test_neg_z = NodeStorage::shift_neg_z(src.0);
+            let dst_test_neg_z = shift_neg_z(src);
 
-            assert_eq!(dst_sane_neg_z.0, dst_test_neg_z);
+            assert_eq!(dst_sane_neg_z, dst_test_neg_z);
         }
 
         {
-            let mut dst_sane_pos_z = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_pos_z = u8x64::splat(0);
             for z in 0..7 {
                 for y in 0..8 {
                     for x in 0..8 {
-                        dst_sane_pos_z.put_bit(
-                            NodeStorage::index(x, y, z + 1),
-                            src.get_bit(NodeStorage::index(x, y, z)),
+                        modify_bit(
+                            &mut dst_sane_pos_z,
+                            section_index(Simd::from_xyz(x, y, z + 1)),
+                            get_bit(&src, section_index(Simd::from_xyz(x, y, z))),
                         );
                     }
                 }
             }
 
-            let dst_test_pos_z = NodeStorage::shift_pos_z(src.0);
+            let dst_test_pos_z = shift_pos_z(src);
 
-            assert_eq!(dst_sane_pos_z.0, dst_test_pos_z);
+            assert_eq!(dst_sane_pos_z, dst_test_pos_z);
         }
     }
 }
@@ -251,110 +160,165 @@ fn edge_move_test() {
     let mut rand = StdRng::seed_from_u64(RANDOM_SEED);
 
     for _ in 0..ITERATIONS {
-        let mut src = NodeStorage(u8x64::splat(0));
+        let mut src = u8x64::splat(0);
 
-        rand.fill_bytes(src.0.as_mut_array());
+        rand.fill_bytes(src.as_mut_array());
 
         {
-            let mut dst_sane_neg_to_pos_x = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_neg_to_pos_x = u8x64::splat(0);
 
             for z in 0..8 {
                 for y in 0..8 {
-                    dst_sane_neg_to_pos_x.put_bit(
-                        NodeStorage::index(7, y, z),
-                        src.get_bit(NodeStorage::index(0, y, z)),
+                    modify_bit(
+                        &mut dst_sane_neg_to_pos_x,
+                        section_index(Simd::from_xyz(7, y, z)),
+                        get_bit(&src, section_index(Simd::from_xyz(0, y, z))),
                     );
                 }
             }
 
-            let dst_test_neg_to_pos_x = NodeStorage::edge_neg_to_pos_x(src.0);
+            let dst_test_neg_to_pos_x = edge_neg_to_pos_x(src);
 
-            assert_eq!(dst_sane_neg_to_pos_x.0, dst_test_neg_to_pos_x);
+            assert_eq!(dst_sane_neg_to_pos_x, dst_test_neg_to_pos_x);
         }
 
         {
-            let mut dst_sane_pos_to_neg_x = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_pos_to_neg_x = u8x64::splat(0);
 
             for z in 0..8 {
                 for y in 0..8 {
-                    dst_sane_pos_to_neg_x.put_bit(
-                        NodeStorage::index(0, y, z),
-                        src.get_bit(NodeStorage::index(7, y, z)),
+                    modify_bit(
+                        &mut dst_sane_pos_to_neg_x,
+                        section_index(Simd::from_xyz(0, y, z)),
+                        get_bit(&src, section_index(Simd::from_xyz(7, y, z))),
                     );
                 }
             }
 
-            let dst_test_pos_to_neg_x = NodeStorage::edge_pos_to_neg_x(src.0);
+            let dst_test_pos_to_neg_x = edge_pos_to_neg_x(src);
 
-            assert_eq!(dst_sane_pos_to_neg_x.0, dst_test_pos_to_neg_x);
+            assert_eq!(dst_sane_pos_to_neg_x, dst_test_pos_to_neg_x);
         }
 
         {
-            let mut dst_sane_neg_to_pos_y = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_neg_to_pos_y = u8x64::splat(0);
 
             for z in 0..8 {
                 for x in 0..8 {
-                    dst_sane_neg_to_pos_y.put_bit(
-                        NodeStorage::index(x, 7, z),
-                        src.get_bit(NodeStorage::index(x, 0, z)),
+                    modify_bit(
+                        &mut dst_sane_neg_to_pos_y,
+                        section_index(Simd::from_xyz(x, 7, z)),
+                        get_bit(&src, section_index(Simd::from_xyz(x, 0, z))),
                     );
                 }
             }
 
-            let dst_test_neg_to_pos_y = NodeStorage::edge_neg_to_pos_y(src.0);
+            let dst_test_neg_to_pos_y = edge_neg_to_pos_y(src);
 
-            assert_eq!(dst_sane_neg_to_pos_y.0, dst_test_neg_to_pos_y);
+            assert_eq!(dst_sane_neg_to_pos_y, dst_test_neg_to_pos_y);
         }
 
         {
-            let mut dst_sane_pos_to_neg_y = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_pos_to_neg_y = u8x64::splat(0);
 
             for z in 0..8 {
                 for x in 0..8 {
-                    dst_sane_pos_to_neg_y.put_bit(
-                        NodeStorage::index(x, 0, z),
-                        src.get_bit(NodeStorage::index(x, 7, z)),
+                    modify_bit(
+                        &mut dst_sane_pos_to_neg_y,
+                        section_index(Simd::from_xyz(x, 0, z)),
+                        get_bit(&src, section_index(Simd::from_xyz(x, 7, z))),
                     );
                 }
             }
 
-            let dst_test_pos_to_neg_y = NodeStorage::edge_pos_to_neg_y(src.0);
+            let dst_test_pos_to_neg_y = edge_pos_to_neg_y(src);
 
-            assert_eq!(dst_sane_pos_to_neg_y.0, dst_test_pos_to_neg_y);
+            assert_eq!(dst_sane_pos_to_neg_y, dst_test_pos_to_neg_y);
         }
 
         {
-            let mut dst_sane_neg_to_pos_z = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_neg_to_pos_z = u8x64::splat(0);
 
             for y in 0..8 {
                 for x in 0..8 {
-                    dst_sane_neg_to_pos_z.put_bit(
-                        NodeStorage::index(x, y, 7),
-                        src.get_bit(NodeStorage::index(x, y, 0)),
+                    modify_bit(
+                        &mut dst_sane_neg_to_pos_z,
+                        section_index(Simd::from_xyz(x, y, 7)),
+                        get_bit(&src, section_index(Simd::from_xyz(x, y, 0))),
                     );
                 }
             }
 
-            let dst_test_neg_to_pos_z = NodeStorage::edge_neg_to_pos_z(src.0);
+            let dst_test_neg_to_pos_z = edge_neg_to_pos_z(src);
 
-            assert_eq!(dst_sane_neg_to_pos_z.0, dst_test_neg_to_pos_z);
+            assert_eq!(dst_sane_neg_to_pos_z, dst_test_neg_to_pos_z);
         }
 
         {
-            let mut dst_sane_pos_to_neg_z = NodeStorage(u8x64::splat(0));
+            let mut dst_sane_pos_to_neg_z = u8x64::splat(0);
 
             for y in 0..8 {
                 for x in 0..8 {
-                    dst_sane_pos_to_neg_z.put_bit(
-                        NodeStorage::index(x, y, 0),
-                        src.get_bit(NodeStorage::index(x, y, 7)),
+                    modify_bit(
+                        &mut dst_sane_pos_to_neg_z,
+                        section_index(Simd::from_xyz(x, y, 0)),
+                        get_bit(&src, section_index(Simd::from_xyz(x, y, 7))),
                     );
                 }
             }
 
-            let dst_test_pos_to_neg_z = NodeStorage::edge_pos_to_neg_z(src.0);
+            let dst_test_pos_to_neg_z = edge_pos_to_neg_z(src);
 
-            assert_eq!(dst_sane_pos_to_neg_z.0, dst_test_pos_to_neg_z);
+            assert_eq!(dst_sane_pos_to_neg_z, dst_test_pos_to_neg_z);
+        }
+    }
+}
+
+#[test]
+fn direction_mask_test() {
+    for camera_x in 0..8 {
+        for camera_y in 0..8 {
+            for camera_z in 0..8 {
+                let camera_tile_coords = u8x3::from_xyz(camera_x, camera_y, camera_z);
+
+                let mut sane_camera_direction_masks = [SECTIONS_EMPTY; DIRECTION_COUNT];
+
+                for tile_x in 0..8 {
+                    for tile_y in 0..8 {
+                        for tile_z in 0..8 {
+                            let other_tile_coords = Simd::from_xyz(tile_x, tile_y, tile_z);
+
+                            let negative = other_tile_coords.simd_le(camera_tile_coords);
+                            let positive = other_tile_coords.simd_ge(camera_tile_coords);
+                            let traversal_directions =
+                                negative.to_bitmask() as u8 | ((positive.to_bitmask() as u8) << 3);
+
+                            let section_idx = section_index(other_tile_coords);
+                            for dir_idx in 0..6 {
+                                modify_bit(
+                                    &mut sane_camera_direction_masks[dir_idx as usize],
+                                    section_idx,
+                                    traversal_directions.get_bit(dir_idx),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                let test_camera_direction_masks = create_camera_direction_masks(camera_tile_coords);
+
+                let mut directions = ALL_DIRECTIONS;
+                while directions != 0 {
+                    let direction = take_one(&mut directions);
+                    let dir_idx = to_index(direction);
+                    assert_eq!(
+                        sane_camera_direction_masks[dir_idx], test_camera_direction_masks[dir_idx],
+                        "sane != test, Camera Coords: {:?}, Direction: {}",
+                        camera_tile_coords,
+                        to_str(direction)
+                    );
+                }
+            }
         }
     }
 }
@@ -362,13 +326,12 @@ fn edge_move_test() {
 // TODO: make this automatic
 #[test]
 fn step_test() {
-    let coord_space = GraphCoordSpace::new(6, 6, 6, -4, 19);
     let coords = LocalTileCoords(Simd::from_xyz(10, 15, 31));
 
     let mut direction_set = ALL_DIRECTIONS;
     while direction_set != 0 {
         let direction = take_one(&mut direction_set);
-        let stepped = coord_space.step(coords, direction);
+        let stepped = coords.step(direction);
         println!("{} {:?}", to_str(direction), stepped);
     }
 }

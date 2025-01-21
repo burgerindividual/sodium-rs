@@ -3,8 +3,7 @@
 use std::boxed::Box;
 
 use context::GraphSearchContext;
-use core_simd::simd::Simd;
-use tile::NodeStorage;
+use core_simd::simd::{u8x64, Simd};
 
 use crate::graph::*;
 use crate::math::*;
@@ -37,18 +36,15 @@ pub struct FFICamera {
 }
 
 #[repr(C)]
-pub struct FFISectionTraversableBlocks(pub [u8; 512]);
-
-#[repr(C)]
 pub struct FFIVisibleSectionsTile {
-    pub origin_section_coords: [i32; 3],
+    pub origin_region_coords: [i32; 3],
     pub visible_sections_ptr: *const [u64; 8],
 }
 
 impl FFIVisibleSectionsTile {
-    pub fn new(origin_section_coords: i32x3, visible_sections: *const NodeStorage) -> Self {
+    pub fn new(origin_region_coords: i32x3, visible_sections: *const u8x64) -> Self {
         Self {
-            origin_section_coords: origin_section_coords.to_array(),
+            origin_region_coords: origin_region_coords.to_array(),
             visible_sections_ptr: visible_sections.cast::<[u64; 8]>(),
         }
     }
@@ -107,33 +103,13 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSet
     x: i32,
     y: i32,
     z: i32,
-    traversable_blocks_ptr: *const FFISectionTraversableBlocks,
+    visibility_bitmask: u64,
 ) {
     let graph = graph_ptr
         .as_mut()
         .expect("expected pointer to graph to be valid");
 
-    let traversable_blocks = traversable_blocks_ptr
-        .as_ref()
-        .expect("expected pointer to traversable blocks to be valid");
-
-    graph.set_section(i32x3::from_xyz(x, y, z), &traversable_blocks.0);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphRemoveSection(
-    _: *mut JEnv,
-    _: *mut JClass,
-    graph_ptr: *mut Graph,
-    x: i32,
-    y: i32,
-    z: i32,
-) {
-    let graph = graph_ptr
-        .as_mut()
-        .expect("expected pointer to graph to be valid");
-
-    graph.remove_section(i32x3::from_xyz(x, y, z));
+    graph.set_section(i32x3::from_xyz(x, y, z), visibility_bitmask);
 }
 
 #[no_mangle]

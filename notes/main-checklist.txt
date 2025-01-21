@@ -86,7 +86,9 @@ I am not deleting these because I'd like to archive the thought process behind h
     - make fully packed?
     - dealing with levels?
 
-[-] Operation Javacide
+[x] Operation Javacide
+
+[x] Fix issue with java not interpreting the return results correctly
 
 [-] Write more tests
     - check the todo in the tests file for more info
@@ -105,8 +107,6 @@ I am not deleting these because I'd like to archive the thought process behind h
     - Could be an issue with the direction masks?
     - How are the incoming nodes all 0s???
 
-[ ] Fix issue with java not interpreting the return results correctly
-
 [ ] If any children need to be traversed, should all children be traversed? Or, better yet, should the entire tree
     for that tile be traversed down to the lowest child?
     - Maybe we only need to attempt this for the tile the camera is in. We also may wanna do this forcibly down to
@@ -116,6 +116,8 @@ I am not deleting these because I'd like to archive the thought process behind h
     - Move these thoughts somewhere else
 
 [ ] Make panic formatting better, consider using regex: "\s*[0-9]+: (.*?)\R\s*at (.*):([0-9]+):[0-9]+\R"gm
+
+[ ] Handle being above or below world height
 
 LATER:
 [ ] Multiversioning
@@ -134,14 +136,15 @@ LATER:
       be based off a static AtomicU32 which is incremented on every call to the graph search. the
       current timestamp can be stored in the GraphSearchContext
 
-[ ] Smarter version of Graph.remove_section
+[x] Smarter version of Graph.remove_section
+    - no longer needed
 
 [ ] Make "use occlusion culling" actually work for disabling in spectator mode
     - maybe just traverse the bit inverse of the traversable nodes? i think it could possibly work
 
 [ ] Extensive documentation of the base bfs algorithm, the graph and tile representations, and individual methods
 
-[ ] Re-introduce const generic directions
+[-] Re-introduce const generic directions
     - option 1: have lists for different direction combinations, add children to these lists and iterate
     - option 2: have const generic "guaranteed directions" and runtime "possible directions"
 
