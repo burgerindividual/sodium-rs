@@ -205,6 +205,7 @@ impl Graph {
             return;
         }
 
+        let mut visible_sections = SECTIONS_EMPTY;
         let mut incoming_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
 
         // the center tile has no incoming directions, so there will be no data from
@@ -213,13 +214,15 @@ impl Graph {
             let tile = self.get_tile_mut(index);
             let section_idx = tile::section_index(context.camera_section_in_tile);
 
-            for outgoing_sections in &mut tile.outgoing_dir_section_sets {
-                *outgoing_sections = SECTIONS_EMPTY;
-                tile::set_bit(outgoing_sections, section_idx);
-            }
+            tile::set_bit(&mut visible_sections, section_idx);
+            tile.setup_center_tile(visible_sections);
         } else {
-            let all_edges_empty =
-                self.get_incoming_edges(coords, INCOMING_DIRS, &mut incoming_dir_section_sets);
+            let all_edges_empty = self.get_incoming_edges(
+                coords,
+                INCOMING_DIRS,
+                &mut visible_sections,
+                &mut incoming_dir_section_sets,
+            );
 
             // FAST PATH: if we start the traversal with all 0s, we'll end with all 0s.
             if all_edges_empty {
@@ -237,18 +240,19 @@ impl Graph {
         let tile = self.get_tile_mut(index);
 
         tile.find_visible_sections::<TRAVERSAL_DIRS>(
+            visible_sections,
             incoming_dir_section_sets,
             &context.camera_direction_masks,
         );
 
         if tile.visible_sections != SECTIONS_EMPTY {
-            let origin_region_coords =
-                (context.global_tile_offset + coords.0.cast::<i32>()) << Simd::from_xyz(0, 1, 0);
+            let local_region_coords = coords.0.cast::<i32>() << Simd::from_xyz(0, 1, 0);
+            let global_region_coords = context.global_region_offset + local_region_coords;
 
             let visible_sections_ptr = &raw const tile.visible_sections;
 
             self.visible_tiles.push(FFIVisibleSectionsTile::new(
-                origin_region_coords,
+                global_region_coords,
                 visible_sections_ptr,
             ));
         }
@@ -258,7 +262,8 @@ impl Graph {
         &mut self,
         coords: LocalTileCoords,
         mut incoming_directions: u8,
-        dest: &mut [u8x64; DIRECTION_COUNT],
+        visible_sections: &mut u8x64,
+        incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
     ) -> bool {
         let mut all_edges_empty = true;
 
@@ -266,7 +271,8 @@ impl Graph {
             let direction = take_one(&mut incoming_directions);
             let incoming_edge = self.get_incoming_edge(coords, direction);
             all_edges_empty &= incoming_edge == SECTIONS_EMPTY;
-            dest[to_index(direction)] = incoming_edge;
+            *visible_sections |= incoming_edge;
+            incoming_dir_section_sets[to_index(direction)] = incoming_edge;
         }
 
         all_edges_empty
@@ -311,11 +317,15 @@ impl Graph {
     }
 
     pub fn set_section(&mut self, section_coords: i32x3, visibility_data: u64) {
-        #[cfg(debug_assertions)]
-        println!("Set Section - Coords: {:?}", section_coords);
-
         let tile_coords = self.coord_space.section_to_tile_coords(section_coords);
         let index = self.coord_space.pack_index(tile_coords);
+
+        #[cfg(debug_assertions)]
+        println!(
+            "Set Section - Section Coords: {:?}, Tile Coords: {:?}, Tile Index: {:?}",
+            section_coords, tile_coords.0, index.0
+        );
+
         let tile = self.get_tile_mut(index);
 
         let section_coords_in_tile = section_coords.cast::<u8>() & Simd::splat(0b111);

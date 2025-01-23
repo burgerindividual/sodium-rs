@@ -1,32 +1,51 @@
 #![cfg(test)]
 
+use std::collections::HashMap;
+
 use core_simd::simd::prelude::*;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
 use crate::bitset::BitSet;
-use crate::graph::coords::LocalTileCoords;
+use crate::graph::coords::{GraphCoordSpace, LocalTileCoords, LocalTileIndex};
 use crate::graph::direction::*;
 use crate::graph::tile::*;
 use crate::math::{u8x3, Coords3};
 
 const RANDOM_SEED: u64 = 8427234087098706983;
 
-// #[test]
-// fn pack_tile_index() {
-//     for x in 0..=255 {
-//         for y in 0..=255 {
-//             for z in 0..=255 {
-//                 let local_coord = LocalTileCoords::from_xyz(x, y, z);
+#[test]
+fn pack_index_test() {
+    let graph_y_bits = 2;
+    let graph_xz_bits = 3;
 
-//                 let index = LocalTileIndex::<0>::pack(local_coord);
-//                 let unpacked = index.unpack();
+    let graph_y_len_tiles = 1 << graph_y_bits;
+    let graph_xz_len_tiles = 1 << graph_xz_bits;
 
-//                 assert_eq!(unpacked, local_coord);
-//             }
-//         }
-//     }
-// }
+    let coord_space = GraphCoordSpace::new(graph_xz_bits, graph_y_bits, graph_xz_bits, -4, 19);
+    let mut index_coords_map = HashMap::<LocalTileIndex, LocalTileCoords>::new();
+
+    for x in 0..graph_xz_len_tiles {
+        for y in 0..graph_y_len_tiles {
+            for z in 0..graph_xz_len_tiles {
+                let coords = LocalTileCoords::from_xyz(x, y, z);
+                let index = coord_space.pack_index(coords);
+
+                let entry = index_coords_map.get(&index);
+                if let Some(&existing_coords) = entry {
+                    panic!(
+                        "Duplicate Tile Index Found: {:?}\nCoords: {:?} and {:?}",
+                        index.0, existing_coords.0, coords.0
+                    );
+                } else {
+                    index_coords_map.insert(index, coords);
+                }
+            }
+        }
+    }
+
+    // test wrapping on edges
+}
 
 #[test]
 fn shifts_test() {
@@ -312,7 +331,8 @@ fn direction_mask_test() {
                     let direction = take_one(&mut directions);
                     let dir_idx = to_index(direction);
                     assert_eq!(
-                        sane_camera_direction_masks[dir_idx], test_camera_direction_masks[dir_idx],
+                        sane_camera_direction_masks[dir_idx],
+                        test_camera_direction_masks[dir_idx],
                         "sane != test, Camera Coords: {:?}, Direction: {}",
                         camera_tile_coords,
                         to_str(direction)

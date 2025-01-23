@@ -318,6 +318,7 @@ impl Tile {
     // iteration?
     pub fn find_visible_sections<const TRAVERSAL_DIRS: u8>(
         &mut self,
+        mut visible_sections: u8x64,
         mut incoming_dir_section_sets: [u8x64; DIRECTION_COUNT],
         traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
     ) {
@@ -331,12 +332,9 @@ impl Tile {
         let connection_section_sets =
             self.mask_connection_section_sets::<TRAVERSAL_DIRS>(traversal_direction_masks);
 
-        let mut visible_sections = SECTIONS_EMPTY;
-
-        // maximum of 24 steps to complete the bfs (TODO: is this really faster than a
-        // normal loop?)
-        for _ in 0..24 {
-            let mut new_visible_sections = SECTIONS_EMPTY;
+        // TODO OPT: consider changing this back to "for _ in 0..24" and measure
+        loop {
+            let previous_visible_sections = visible_sections;
 
             if traverse_neg_x {
                 self.update_outgoing_dirs::<TRAVERSAL_DIRS, NEG_X>(
@@ -346,7 +344,7 @@ impl Tile {
                 let incoming_sections =
                     shift_neg_x(self.outgoing_dir_section_sets[to_index(NEG_X)]);
                 incoming_dir_section_sets[to_index(POS_X)] = incoming_sections;
-                new_visible_sections |= incoming_sections;
+                visible_sections |= incoming_sections;
             }
             if traverse_neg_y {
                 self.update_outgoing_dirs::<TRAVERSAL_DIRS, NEG_Y>(
@@ -356,7 +354,7 @@ impl Tile {
                 let incoming_sections =
                     shift_neg_y(self.outgoing_dir_section_sets[to_index(NEG_Y)]);
                 incoming_dir_section_sets[to_index(POS_Y)] = incoming_sections;
-                new_visible_sections |= incoming_sections;
+                visible_sections |= incoming_sections;
             }
             if traverse_neg_z {
                 self.update_outgoing_dirs::<TRAVERSAL_DIRS, NEG_Z>(
@@ -366,7 +364,7 @@ impl Tile {
                 let incoming_sections =
                     shift_neg_z(self.outgoing_dir_section_sets[to_index(NEG_Z)]);
                 incoming_dir_section_sets[to_index(POS_Z)] = incoming_sections;
-                new_visible_sections |= incoming_sections;
+                visible_sections |= incoming_sections;
             }
             if traverse_pos_x {
                 self.update_outgoing_dirs::<TRAVERSAL_DIRS, POS_X>(
@@ -376,7 +374,7 @@ impl Tile {
                 let incoming_sections =
                     shift_pos_x(self.outgoing_dir_section_sets[to_index(POS_X)]);
                 incoming_dir_section_sets[to_index(NEG_X)] = incoming_sections;
-                new_visible_sections |= incoming_sections;
+                visible_sections |= incoming_sections;
             }
             if traverse_pos_y {
                 self.update_outgoing_dirs::<TRAVERSAL_DIRS, POS_Y>(
@@ -386,7 +384,7 @@ impl Tile {
                 let incoming_sections =
                     shift_pos_y(self.outgoing_dir_section_sets[to_index(POS_Y)]);
                 incoming_dir_section_sets[to_index(NEG_Y)] = incoming_sections;
-                new_visible_sections |= incoming_sections;
+                visible_sections |= incoming_sections;
             }
             if traverse_pos_z {
                 self.update_outgoing_dirs::<TRAVERSAL_DIRS, POS_Z>(
@@ -396,17 +394,15 @@ impl Tile {
                 let incoming_sections =
                     shift_pos_z(self.outgoing_dir_section_sets[to_index(POS_Z)]);
                 incoming_dir_section_sets[to_index(NEG_Z)] = incoming_sections;
-                new_visible_sections |= incoming_sections;
+                visible_sections |= incoming_sections;
             }
 
             // TODO: are we sure this can go at the end, or do we have to do it directly
             // after the ORs? If we did do it directly after the ORs, then if no incoming
             // data is provided, it'll stop early.
-            if visible_sections == new_visible_sections {
+            if visible_sections == previous_visible_sections {
                 break;
             }
-
-            visible_sections = new_visible_sections;
         }
 
         // TODO: AND with existing visible nodes when there are more culling stages
@@ -429,6 +425,36 @@ impl Tile {
         }
     }
 
+    pub fn setup_center_tile(&mut self, visible_sections: u8x64) {
+        let fake_section_sets = [visible_sections; DIRECTION_COUNT];
+        let connection_section_sets = self.connection_section_sets;
+
+        self.update_outgoing_dirs::<ALL_DIRECTIONS, NEG_X>(
+            &fake_section_sets,
+            &connection_section_sets,
+        );
+        self.update_outgoing_dirs::<ALL_DIRECTIONS, NEG_Y>(
+            &fake_section_sets,
+            &connection_section_sets,
+        );
+        self.update_outgoing_dirs::<ALL_DIRECTIONS, NEG_Z>(
+            &fake_section_sets,
+            &connection_section_sets,
+        );
+        self.update_outgoing_dirs::<ALL_DIRECTIONS, POS_X>(
+            &fake_section_sets,
+            &connection_section_sets,
+        );
+        self.update_outgoing_dirs::<ALL_DIRECTIONS, POS_Y>(
+            &fake_section_sets,
+            &connection_section_sets,
+        );
+        self.update_outgoing_dirs::<ALL_DIRECTIONS, POS_Z>(
+            &fake_section_sets,
+            &connection_section_sets,
+        );
+    }
+
     // we need to add direction-specific masks when there are pairs of opposing
     // directions
     fn mask_connection_section_sets<const TRAVERSAL_DIRS: u8>(
@@ -442,33 +468,33 @@ impl Tile {
         let mut masked_connection_section_sets = self.connection_section_sets;
 
         if use_x_mask {
-            for connection_idx in NEG_X_MASK_CONNECTION_INDICES {
+            for connection_idx in NEG_X_CONNECTION_INDICES {
                 masked_connection_section_sets[connection_idx] &=
                     traversal_direction_masks[to_index(NEG_X)];
             }
-            for connection_idx in POS_X_MASK_CONNECTION_INDICES {
+            for connection_idx in POS_X_CONNECTION_INDICES {
                 masked_connection_section_sets[connection_idx] &=
                     traversal_direction_masks[to_index(POS_X)];
             }
         }
 
         if use_y_mask {
-            for connection_idx in NEG_Y_MASK_CONNECTION_INDICES {
+            for connection_idx in NEG_Y_CONNECTION_INDICES {
                 masked_connection_section_sets[connection_idx] &=
                     traversal_direction_masks[to_index(NEG_Y)];
             }
-            for connection_idx in POS_Y_MASK_CONNECTION_INDICES {
+            for connection_idx in POS_Y_CONNECTION_INDICES {
                 masked_connection_section_sets[connection_idx] &=
                     traversal_direction_masks[to_index(POS_Y)];
             }
         }
 
         if use_z_mask {
-            for connection_idx in NEG_Z_MASK_CONNECTION_INDICES {
+            for connection_idx in NEG_Z_CONNECTION_INDICES {
                 masked_connection_section_sets[connection_idx] &=
                     traversal_direction_masks[to_index(NEG_Z)];
             }
-            for connection_idx in POS_Z_MASK_CONNECTION_INDICES {
+            for connection_idx in POS_Z_CONNECTION_INDICES {
                 masked_connection_section_sets[connection_idx] &=
                     traversal_direction_masks[to_index(POS_Z)];
             }

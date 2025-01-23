@@ -3,6 +3,7 @@ use std::mem::MaybeUninit;
 use core_simd::simd::prelude::*;
 
 use super::{direction, i16x3, i32x3, i8x3, u16x3, u8x3, Coords3};
+use crate::math::*;
 
 pub struct GraphCoordSpace {
     morton_swizzle_pattern: u8x16,
@@ -50,24 +51,24 @@ impl GraphCoordSpace {
 
             if z_bits != 0 {
                 // choose the first or second u8 of the u16 to sample
-                coord_space.morton_swizzle_pattern[idx] = if cur_z_bit < 8 { 4 } else { 5 };
-                coord_space.morton_bitmasks[idx] = 1 << (cur_z_bit & 0b111);
+                coord_space.morton_swizzle_pattern[idx] = Z as u8;
+                coord_space.morton_bitmasks[idx] = 1 << cur_z_bit;
                 idx += 1;
                 cur_z_bit += 1;
                 z_bits -= 1;
             }
 
             if y_bits != 0 {
-                coord_space.morton_swizzle_pattern[idx] = if cur_y_bit < 8 { 2 } else { 3 };
-                coord_space.morton_bitmasks[idx] = 1 << (cur_y_bit & 0b111);
+                coord_space.morton_swizzle_pattern[idx] = Y as u8;
+                coord_space.morton_bitmasks[idx] = 1 << cur_y_bit;
                 idx += 1;
                 cur_y_bit += 1;
                 y_bits -= 1;
             }
 
             if x_bits != 0 {
-                coord_space.morton_swizzle_pattern[idx] = if cur_x_bit < 8 { 0 } else { 1 };
-                coord_space.morton_bitmasks[idx] = 1 << (cur_x_bit & 0b111);
+                coord_space.morton_swizzle_pattern[idx] = X as u8;
+                coord_space.morton_bitmasks[idx] = 1 << cur_x_bit;
                 idx += 1;
                 cur_x_bit += 1;
                 x_bits -= 1;
@@ -204,7 +205,7 @@ impl Coords3<i8> for LocalTileCoords {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Hash, Eq)]
 pub struct LocalTileIndex(pub u16);
 
 impl LocalTileIndex {
