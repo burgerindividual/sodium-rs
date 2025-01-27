@@ -6,40 +6,44 @@ use crate::graph::direction::*;
 // This clashes with our direction format. because of this, it makes sense
 // to just provide all 15 possible direction combinations as constants,
 // calculated with the following:
-// smaller_dir_ordinal * 6 + larger_dir_ordinal
-pub const BIT_IDX_NEG_Y_NEG_X: u8 = 4;
-pub const BIT_IDX_NEG_Z_NEG_X: u8 = 20;
-pub const BIT_IDX_NEG_Z_NEG_Y: u8 = 2;
-pub const BIT_IDX_POS_X_NEG_X: u8 = 37;
-pub const BIT_IDX_POS_X_NEG_Y: u8 = 5;
-pub const BIT_IDX_POS_X_NEG_Z: u8 = 21;
-pub const BIT_IDX_POS_Y_NEG_X: u8 = 12;
-pub const BIT_IDX_POS_Y_NEG_Y: u8 = 1;
-pub const BIT_IDX_POS_Y_NEG_Z: u8 = 10;
-pub const BIT_IDX_POS_Y_POS_X: u8 = 13;
-pub const BIT_IDX_POS_Z_NEG_X: u8 = 28;
-pub const BIT_IDX_POS_Z_NEG_Y: u8 = 3;
-pub const BIT_IDX_POS_Z_NEG_Z: u8 = 19;
-pub const BIT_IDX_POS_Z_POS_X: u8 = 29;
-pub const BIT_IDX_POS_Z_POS_Y: u8 = 11;
+// smaller_dir_ordinal * 8 + larger_dir_ordinal
+pub const ARRAY_TO_BIT_IDX: [u8; UNIQUE_CONNECTION_COUNT] = [
+    4,  // NEG_Y <-> NEG_X
+    20, // NEG_Z <-> NEG_X
+    2,  // NEG_Z <-> NEG_Y
+    37, // POS_X <-> NEG_X
+    5,  // POS_X <-> NEG_Y
+    21, // POS_X <-> NEG_Z
+    12, // POS_Y <-> NEG_X
+    1,  // POS_Y <-> NEG_Y
+    10, // POS_Y <-> NEG_Z
+    13, // POS_Y <-> POS_X
+    28, // POS_Z <-> NEG_X
+    3,  // POS_Z <-> NEG_Y
+    19, // POS_Z <-> NEG_Z
+    29, // POS_Z <-> POS_X
+    11, // POS_Z <-> POS_Y
+];
 
 pub const UNIQUE_CONNECTION_COUNT: usize = 15;
 
-// returns the index in the upper right triangle in which a > b.
-// undefined for a == b.
+// Returns the array index for the mutual connection between dir_1 and dir_2.
+// The result of this function is undefined for dir_1 == dir_2.
+// The layout of connections to indices can be found here:
+// http://tinyurl.com/sodium-vis-triangle
 pub const fn connection_index(dir_1: u8, dir_2: u8) -> usize {
     debug_assert!(dir_1 != dir_2);
 
     let dir_1_idx = to_index(dir_1);
     let dir_2_idx = to_index(dir_2);
 
-    let (small_idx, large_idx) = if dir_1 > dir_2 {
+    let (large_idx, small_idx) = if dir_1 > dir_2 {
         (dir_1_idx, dir_2_idx)
     } else {
         (dir_2_idx, dir_1_idx)
     };
 
-    (((5 - small_idx) * 5) + large_idx) - (0b1100 >> small_idx)
+    (large_idx * 4) + small_idx + (0b1100 >> large_idx) - 10
 }
 
 pub const NEG_X_CONNECTION_INDICES: [usize; 5] = [0, 1, 3, 6, 10];

@@ -24,6 +24,11 @@ impl GraphCoordSpace {
         world_bottom_section_y: i8,
         world_top_section_y: i8,
     ) -> Self {
+        assert!(
+            (x_bits + y_bits + z_bits) < 16,
+            "Total index bits exceeds 16. X: {x_bits}, Y: {y_bits}, Z: {z_bits}"
+        );
+
         // NOTE: extra bits need to be present in the LocalTileCoords, but not in the
         // LocalTileIndex, as long as we're not doing any unpacking.
         let bit_counts = u8x3::from_xyz(x_bits, y_bits, z_bits);
@@ -47,8 +52,6 @@ impl GraphCoordSpace {
         // bits roughly in 0b...XYZXYZ order
 
         while z_bits != 0 || y_bits != 0 || x_bits != 0 {
-            assert!(idx < 16, "Total index bits exceeds 16");
-
             if z_bits != 0 {
                 // choose the first or second u8 of the u16 to sample
                 coord_space.morton_swizzle_pattern[idx] = Z as u8;
@@ -139,7 +142,7 @@ impl GraphCoordSpace {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(align(8))]
+#[repr(align(8))] // speeds up packing and stepping slightly
 pub struct LocalTileCoords(pub i8x3);
 
 impl LocalTileCoords {
@@ -176,8 +179,6 @@ impl LocalTileCoords {
         Self(self.0 + offset_vec)
     }
 
-    // TODO: should we just inline this? we've pretty much inlined all the other
-    // conversions
     pub fn to_local_block_coords(self) -> i16x3 {
         self.0.cast::<i16>() << Simd::splat(7)
     }

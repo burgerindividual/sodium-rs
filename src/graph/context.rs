@@ -1,3 +1,5 @@
+use std::i16;
+
 use core_simd::simd::prelude::*;
 use std_float::StdFloat;
 
@@ -28,6 +30,7 @@ pub struct GraphSearchContext {
 }
 
 impl GraphSearchContext {
+    #[no_mangle]
     pub fn new(
         coord_space: &GraphCoordSpace,
         frustum_planes: [f32x6; 4],
@@ -38,6 +41,7 @@ impl GraphSearchContext {
         // TODO: check against graph size
         // TODO: assert search distance size isn't too big
         // TODO: assert camera pos isn't ridiculous
+        // TODO: deal with camera above and below world
 
         let frustum = LocalFrustum::new(frustum_planes);
 
@@ -56,17 +60,29 @@ impl GraphSearchContext {
         let camera_tile_coords = (camera_pos_int >> Simd::splat(7)).cast::<u8>();
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
+
+        // TODO: is the -1 necessary?
+        let local_top_block_y = (((coord_space.world_top_section_y as i16
+            - coord_space.world_bottom_section_y as i16
+            + 1) as u16)
+            << 4)
+            - 1;
+
         let positive_step_counts = unsafe {
-            ((camera_pos + Simd::splat(search_distance)).to_int_unchecked::<u16>()
+            ((camera_pos + Simd::splat(search_distance))
+                .to_int_unchecked::<u16>()
+                .simd_min(Simd::from_xyz(u16::MAX, local_top_block_y, u16::MAX))
                 >> Simd::splat(7))
             .cast::<u8>()
                 - camera_tile_coords
         };
-        // we cast from f32 to i16 to u16 here. this is to allow underflowing, as we
-        // want an underflow to
+        // we cast from f32 to i16 to u8 here. this is to allow underflowing, as we
+        // want an underflow to wrap around on the X and Z axis
         let negative_step_counts = unsafe {
             camera_tile_coords
-                - ((camera_pos - Simd::splat(search_distance)).to_int_unchecked::<i16>()
+                - ((camera_pos - Simd::splat(search_distance))
+                    .to_int_unchecked::<i16>()
+                    .simd_max(Simd::from_xyz(i16::MIN, 0, i16::MIN))
                     >> Simd::splat(7))
                 .cast::<u8>()
         };

@@ -18,7 +18,7 @@ pub const fn to_index(direction: u8) -> usize {
 }
 
 pub const fn all_except(direction_set: u8) -> u8 {
-    !direction_set & 0b111111
+    ALL_DIRECTIONS & !direction_set
 }
 
 pub const fn opposite(direction_set: u8) -> u8 {

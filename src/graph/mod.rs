@@ -1,5 +1,3 @@
-use std::hint::unreachable_unchecked;
-
 use context::{CombinedTestResults, GraphSearchContext};
 use coords::{GraphCoordSpace, LocalTileIndex};
 use core_simd::simd::prelude::*;
@@ -38,8 +36,6 @@ pub struct Graph {
     pub coord_space: GraphCoordSpace,
     do_height_checks: bool,
 
-    pub current_timestamp: u64,
-
     pub visible_tiles: Vec<FFIVisibleSectionsTile>,
 }
 
@@ -58,9 +54,9 @@ impl Graph {
         // search wraps past the edge of the graph, we would land on the same tile that
         // was just processed.
         let graph_y_bits =
-            (u16::BITS as u8 - (world_y_len_sections - 1).leading_zeros() as u8).max(2);
+            (u16::BITS as u8 - (world_y_len_sections - 1).leading_zeros() as u8).max(5) - 3;
         let graph_xz_bits =
-            (u16::BITS as u8 - (world_xz_len_sections - 1).leading_zeros() as u8).max(2);
+            (u16::BITS as u8 - (world_xz_len_sections - 1).leading_zeros() as u8).max(5) - 3;
 
         let graph_y_len_tiles = 1_usize << graph_y_bits;
         let graph_xz_len_tiles = 1_usize << graph_xz_bits;
@@ -88,7 +84,6 @@ impl Graph {
                 world_top_section_y,
             ),
             do_height_checks,
-            current_timestamp: 0,
             visible_tiles: Vec::with_capacity(128), // probably not a bad start
         }
     }
@@ -102,9 +97,10 @@ impl Graph {
     pub fn clear(&mut self) {
         self.visible_tiles.clear();
 
-        // if the cull is being run 1000 times a second, this'll take 584942415 years to
-        // overflow
-        self.current_timestamp += 1;
+        #[cfg(debug_assertions)]
+        for tile in &mut self.tiles {
+            tile.set_empty();
+        }
     }
 
     fn iterate_tiles(&mut self, context: &GraphSearchContext) {
@@ -185,19 +181,19 @@ impl Graph {
         #[cfg(debug_assertions)]
         println!("Current Tile - Coords: {:?} Index: {:?}", coords.0, index.0);
 
-        let current_timestamp = self.current_timestamp;
+        // try to quickly determine whether we need to actually traverse the tile using
+        // the frustum, fog, etc
+        let test_result = context.test_tile(&self.coord_space, coords, self.do_height_checks);
 
         // tile needs to be re-borrowed multiple times in this method, due to borrow
         // checker rules. these should get optimized out.
         let tile = self.get_tile_mut(index);
 
-        tile.last_change_timestamp = current_timestamp;
-
-        // try to quickly determine whether we need to actually traverse the tile using
-        // the frustum, fog, etc
-        let test_result = context.test_tile(&self.coord_space, coords, self.do_height_checks);
-
-        let tile = self.get_tile_mut(index);
+        debug_assert_eq!(
+            tile.outgoing_dir_section_sets,
+            [SECTIONS_EMPTY; DIRECTION_COUNT]
+        );
+        debug_assert_eq!(tile.visible_sections, SECTIONS_EMPTY);
 
         if test_result == CombinedTestResults::OUTSIDE {
             // early exit
@@ -205,7 +201,7 @@ impl Graph {
             return;
         }
 
-        let mut visible_sections = SECTIONS_EMPTY;
+        let mut start_visible_sections = SECTIONS_EMPTY;
         let mut incoming_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
 
         // the center tile has no incoming directions, so there will be no data from
@@ -214,18 +210,17 @@ impl Graph {
             let tile = self.get_tile_mut(index);
             let section_idx = tile::section_index(context.camera_section_in_tile);
 
-            tile::set_bit(&mut visible_sections, section_idx);
-            tile.setup_center_tile(visible_sections);
+            tile::set_bit(&mut start_visible_sections, section_idx);
+            tile.setup_center_tile(start_visible_sections);
         } else {
-            let all_edges_empty = self.get_incoming_edges(
+            self.get_incoming_edges::<INCOMING_DIRS>(
                 coords,
-                INCOMING_DIRS,
-                &mut visible_sections,
+                &mut start_visible_sections,
                 &mut incoming_dir_section_sets,
             );
 
             // FAST PATH: if we start the traversal with all 0s, we'll end with all 0s.
-            if all_edges_empty {
+            if start_visible_sections == SECTIONS_EMPTY {
                 // early exit
                 let tile = self.get_tile_mut(index);
                 tile.set_empty();
@@ -240,7 +235,7 @@ impl Graph {
         let tile = self.get_tile_mut(index);
 
         tile.find_visible_sections::<TRAVERSAL_DIRS>(
-            visible_sections,
+            start_visible_sections,
             incoming_dir_section_sets,
             &context.camera_direction_masks,
         );
@@ -258,53 +253,65 @@ impl Graph {
         }
     }
 
-    fn get_incoming_edges(
+    fn get_incoming_edges<const INCOMING_DIRS: u8>(
         &mut self,
         coords: LocalTileCoords,
-        mut incoming_directions: u8,
         visible_sections: &mut u8x64,
         incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
-    ) -> bool {
-        let mut all_edges_empty = true;
-
-        while incoming_directions != 0 {
-            let direction = take_one(&mut incoming_directions);
-            let incoming_edge = self.get_incoming_edge(coords, direction);
-            all_edges_empty &= incoming_edge == SECTIONS_EMPTY;
+    ) {
+        if bitset::contains(INCOMING_DIRS, NEG_X) {
+            let incoming_edge = self.get_incoming_edge::<NEG_X>(coords);
             *visible_sections |= incoming_edge;
-            incoming_dir_section_sets[to_index(direction)] = incoming_edge;
+            incoming_dir_section_sets[to_index(NEG_X)] = incoming_edge;
         }
 
-        all_edges_empty
+        if bitset::contains(INCOMING_DIRS, NEG_Y) {
+            let incoming_edge = self.get_incoming_edge::<NEG_Y>(coords);
+            *visible_sections |= incoming_edge;
+            incoming_dir_section_sets[to_index(NEG_Y)] = incoming_edge;
+        }
+
+        if bitset::contains(INCOMING_DIRS, NEG_Z) {
+            let incoming_edge = self.get_incoming_edge::<NEG_Z>(coords);
+            *visible_sections |= incoming_edge;
+            incoming_dir_section_sets[to_index(NEG_Z)] = incoming_edge;
+        }
+
+        if bitset::contains(INCOMING_DIRS, POS_X) {
+            let incoming_edge = self.get_incoming_edge::<POS_X>(coords);
+            *visible_sections |= incoming_edge;
+            incoming_dir_section_sets[to_index(POS_X)] = incoming_edge;
+        }
+
+        if bitset::contains(INCOMING_DIRS, POS_Y) {
+            let incoming_edge = self.get_incoming_edge::<POS_Y>(coords);
+            *visible_sections |= incoming_edge;
+            incoming_dir_section_sets[to_index(POS_Y)] = incoming_edge;
+        }
+
+        if bitset::contains(INCOMING_DIRS, POS_Z) {
+            let incoming_edge = self.get_incoming_edge::<POS_Z>(coords);
+            *visible_sections |= incoming_edge;
+            incoming_dir_section_sets[to_index(POS_Z)] = incoming_edge;
+        }
     }
 
-    fn get_incoming_edge(&mut self, coords: LocalTileCoords, direction: u8) -> u8x64 {
-        let current_timestamp = self.current_timestamp;
-        let neighbor_coords = coords.step(direction);
+    fn get_incoming_edge<const DIRECTION: u8>(&mut self, coords: LocalTileCoords) -> u8x64 {
+        let neighbor_coords = coords.step(DIRECTION);
         let neighbor_index = self.coord_space.pack_index(neighbor_coords);
         let neighbor_tile = self.get_tile_mut(neighbor_index);
-        neighbor_tile.clear_if_outdated(current_timestamp);
 
-        match direction {
-            NEG_X => {
-                tile::edge_pos_to_neg_x(neighbor_tile.outgoing_dir_section_sets[to_index(POS_X)])
-            }
-            NEG_Y => {
-                tile::edge_pos_to_neg_y(neighbor_tile.outgoing_dir_section_sets[to_index(POS_Y)])
-            }
-            NEG_Z => {
-                tile::edge_pos_to_neg_z(neighbor_tile.outgoing_dir_section_sets[to_index(POS_Z)])
-            }
-            POS_X => {
-                tile::edge_neg_to_pos_x(neighbor_tile.outgoing_dir_section_sets[to_index(NEG_X)])
-            }
-            POS_Y => {
-                tile::edge_neg_to_pos_y(neighbor_tile.outgoing_dir_section_sets[to_index(NEG_Y)])
-            }
-            POS_Z => {
-                tile::edge_neg_to_pos_z(neighbor_tile.outgoing_dir_section_sets[to_index(NEG_Z)])
-            }
-            _ => unsafe { unreachable_unchecked() },
+        let neighbor_outgoing_sections =
+            neighbor_tile.outgoing_dir_section_sets[to_index(opposite(DIRECTION))];
+
+        match DIRECTION {
+            NEG_X => tile::edge_pos_to_neg_x(neighbor_outgoing_sections),
+            NEG_Y => tile::edge_pos_to_neg_y(neighbor_outgoing_sections),
+            NEG_Z => tile::edge_pos_to_neg_z(neighbor_outgoing_sections),
+            POS_X => tile::edge_neg_to_pos_x(neighbor_outgoing_sections),
+            POS_Y => tile::edge_neg_to_pos_y(neighbor_outgoing_sections),
+            POS_Z => tile::edge_neg_to_pos_z(neighbor_outgoing_sections),
+            _ => unreachable!(),
         }
     }
 
@@ -322,8 +329,8 @@ impl Graph {
 
         #[cfg(debug_assertions)]
         println!(
-            "Set Section - Section Coords: {:?}, Tile Coords: {:?}, Tile Index: {:?}",
-            section_coords, tile_coords.0, index.0
+            "Set Section - Section Coords: {:?}, Tile Coords: {:?}, Tile Index: {:?}, Vis: {}",
+            section_coords, tile_coords.0, index.0, visibility_data
         );
 
         let tile = self.get_tile_mut(index);
@@ -331,80 +338,12 @@ impl Graph {
         let section_coords_in_tile = section_coords.cast::<u8>() & Simd::splat(0b111);
         let section_idx = tile::section_index(section_coords_in_tile);
 
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(NEG_Y, NEG_X)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_NEG_Y_NEG_X),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(NEG_Z, NEG_X)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_NEG_Z_NEG_X),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(NEG_Z, NEG_Y)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_NEG_Z_NEG_Y),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_X, NEG_X)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_X_NEG_X),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_X, NEG_Y)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_X_NEG_Y),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_X, NEG_Z)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_X_NEG_Z),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Y, NEG_X)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Y_NEG_X),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Y, NEG_Y)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Y_NEG_Y),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Y, NEG_Z)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Y_NEG_Z),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Y, POS_X)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Y_POS_X),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Z, NEG_X)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Z_NEG_X),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Z, NEG_Y)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Z_NEG_Y),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Z, NEG_Z)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Z_NEG_Z),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Z, POS_X)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Z_POS_X),
-        );
-        tile::modify_bit(
-            &mut tile.connection_section_sets[connection_index(POS_Z, POS_Y)],
-            section_idx,
-            visibility_data.get_bit(BIT_IDX_POS_Z_POS_Y),
-        );
+        for (array_idx, &bit_idx) in ARRAY_TO_BIT_IDX.iter().enumerate() {
+            tile::modify_bit(
+                &mut tile.connection_section_sets[array_idx],
+                section_idx,
+                visibility_data.get_bit(bit_idx),
+            );
+        }
     }
 }

@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::boxed::Box;
+use std::collections::HashSet;
 
 use context::GraphSearchContext;
 use core_simd::simd::{u8x64, Simd};
@@ -16,15 +17,15 @@ type JClass = core::ffi::c_void;
 
 #[repr(C)]
 pub struct FFISlice<T> {
-    pub count: usize,
     pub data_ptr: *const T,
+    pub count: usize,
 }
 
 impl<T> From<&[T]> for FFISlice<T> {
     fn from(value: &[T]) -> Self {
         Self {
-            count: value.len(),
             data_ptr: value.as_ptr(),
+            count: value.len(),
         }
     }
 }
@@ -150,6 +151,25 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
     );
 
     graph.cull(&context);
+
+    #[cfg(debug_assertions)]
+    {
+        let mut coords_set = HashSet::<[i32; 3]>::with_capacity(100);
+        let mut pointer_set = HashSet::<*const [u64; 8]>::with_capacity(100);
+        for tile in &graph.visible_tiles {
+            if coords_set.contains(&tile.origin_region_coords) {
+                panic!("Duplicate coords found in visible_tiles");
+            } else {
+                coords_set.insert(tile.origin_region_coords);
+            }
+
+            if pointer_set.contains(&tile.visible_sections_ptr) {
+                panic!("Duplicate pointer found in visible_tiles");
+            } else {
+                pointer_set.insert(tile.visible_sections_ptr);
+            }
+        }
+    }
 
     *return_value_ptr = graph.visible_tiles.as_slice().into();
 }
