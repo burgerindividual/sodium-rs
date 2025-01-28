@@ -1,5 +1,7 @@
 use crate::graph::direction::*;
 
+pub const UNIQUE_CONNECTION_COUNT: usize = 15;
+
 // Minecraft's Direction enum uses the following order:
 // -Y, +Y, -Z, +Z, -X, +X
 //
@@ -25,8 +27,6 @@ pub const ARRAY_TO_BIT_IDX: [u8; UNIQUE_CONNECTION_COUNT] = [
     11, // POS_Z <-> POS_Y
 ];
 
-pub const UNIQUE_CONNECTION_COUNT: usize = 15;
-
 // Returns the array index for the mutual connection between dir_1 and dir_2.
 // The result of this function is undefined for dir_1 == dir_2.
 // The layout of connections to indices can be found here:
@@ -45,10 +45,3 @@ pub const fn connection_index(dir_1: u8, dir_2: u8) -> usize {
 
     (large_idx * 4) + small_idx + (0b1100 >> large_idx) - 10
 }
-
-pub const NEG_X_CONNECTION_INDICES: [usize; 5] = [0, 1, 3, 6, 10];
-pub const NEG_Y_CONNECTION_INDICES: [usize; 5] = [0, 2, 4, 7, 11];
-pub const NEG_Z_CONNECTION_INDICES: [usize; 5] = [1, 2, 5, 8, 12];
-pub const POS_X_CONNECTION_INDICES: [usize; 5] = [3, 4, 5, 9, 13];
-pub const POS_Y_CONNECTION_INDICES: [usize; 5] = [6, 7, 8, 9, 14];
-pub const POS_Z_CONNECTION_INDICES: [usize; 5] = [10, 11, 12, 13, 14];

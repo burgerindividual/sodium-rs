@@ -128,10 +128,13 @@ impl GraphCoordSpace {
         LocalTileIndex(packed_morton_bits)
     }
 
-    pub fn section_to_tile_coords(&self, section_coords: i32x3) -> LocalTileCoords {
+    pub fn section_to_tile_coords(&self, section_coords: i32x3) -> (LocalTileCoords, u8x3) {
         let shifted_coords =
             section_coords - i32x3::from_xyz(0, self.world_bottom_section_y as i32, 0);
-        LocalTileCoords((shifted_coords >> Simd::splat(3)).cast::<i8>() & self.tile_bitmask)
+        let tile_coords =
+            LocalTileCoords((shifted_coords >> Simd::splat(3)).cast::<i8>() & self.tile_bitmask);
+        let section_coords_in_tile = shifted_coords.cast::<u8>() & Simd::splat(0b111);
+        (tile_coords, section_coords_in_tile)
     }
 
     pub fn block_to_local_coords(&self, block_coords: i32x3) -> u16x3 {

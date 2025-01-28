@@ -254,7 +254,7 @@ impl Graph {
     }
 
     fn get_incoming_edges<const INCOMING_DIRS: u8>(
-        &mut self,
+        &self,
         coords: LocalTileCoords,
         visible_sections: &mut u8x64,
         incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
@@ -296,10 +296,10 @@ impl Graph {
         }
     }
 
-    fn get_incoming_edge<const DIRECTION: u8>(&mut self, coords: LocalTileCoords) -> u8x64 {
+    fn get_incoming_edge<const DIRECTION: u8>(&self, coords: LocalTileCoords) -> u8x64 {
         let neighbor_coords = coords.step(DIRECTION);
         let neighbor_index = self.coord_space.pack_index(neighbor_coords);
-        let neighbor_tile = self.get_tile_mut(neighbor_index);
+        let neighbor_tile = self.get_tile(neighbor_index);
 
         let neighbor_outgoing_sections =
             neighbor_tile.outgoing_dir_section_sets[to_index(opposite(DIRECTION))];
@@ -324,19 +324,18 @@ impl Graph {
     }
 
     pub fn set_section(&mut self, section_coords: i32x3, visibility_data: u64) {
-        let tile_coords = self.coord_space.section_to_tile_coords(section_coords);
-        let index = self.coord_space.pack_index(tile_coords);
+        let (tile_coords, section_coords_in_tile) =
+            self.coord_space.section_to_tile_coords(section_coords);
+        let tile_index = self.coord_space.pack_index(tile_coords);
+        let section_idx = tile::section_index(section_coords_in_tile);
 
         #[cfg(debug_assertions)]
         println!(
-            "Set Section - Section Coords: {:?}, Tile Coords: {:?}, Tile Index: {:?}, Vis: {}",
-            section_coords, tile_coords.0, index.0, visibility_data
+            "Set Section - Section Coords: {:?}, Tile Coords: {:?}, Tile Index: {:?}, Section Index: {:?}, Vis: {}",
+            section_coords, tile_coords.0, tile_index.0, section_idx, visibility_data
         );
 
-        let tile = self.get_tile_mut(index);
-
-        let section_coords_in_tile = section_coords.cast::<u8>() & Simd::splat(0b111);
-        let section_idx = tile::section_index(section_coords_in_tile);
+        let tile = self.get_tile_mut(tile_index);
 
         for (array_idx, &bit_idx) in ARRAY_TO_BIT_IDX.iter().enumerate() {
             tile::modify_bit(

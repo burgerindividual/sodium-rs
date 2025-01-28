@@ -310,181 +310,142 @@ impl Tile {
     // iteration?
     pub fn find_visible_sections<const TRAVERSAL_DIRS: u8>(
         &mut self,
-        mut visible_sections: u8x64,
+        start_visible_sections: u8x64,
         mut incoming_dir_section_sets: [u8x64; DIRECTION_COUNT],
         traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
     ) {
-        let connection_section_sets =
-            self.mask_connection_section_sets::<TRAVERSAL_DIRS>(traversal_direction_masks);
-
         // TODO OPT: consider changing this back to "for _ in 0..24" and measure
         loop {
-            let previous_visible_sections = visible_sections;
-            let previous_outgoing = self.outgoing_dir_section_sets;
-            let previous_incoming = incoming_dir_section_sets;
+            let mut incoming_changed = false;
 
-            if bitset::contains(TRAVERSAL_DIRS, NEG_X) {
-                self.update_outgoing_dirs::<TRAVERSAL_DIRS, NEG_X>(
-                    &incoming_dir_section_sets,
-                    &connection_section_sets,
-                );
-                incoming_dir_section_sets[to_index(POS_X)] |= // TODO: this should not have to be an OR, what gives?
-                    shift_neg_x(self.outgoing_dir_section_sets[to_index(NEG_X)]);
-                visible_sections |= incoming_dir_section_sets[to_index(POS_X)];
-            }
-            if bitset::contains(TRAVERSAL_DIRS, NEG_Y) {
-                self.update_outgoing_dirs::<TRAVERSAL_DIRS, NEG_Y>(
-                    &incoming_dir_section_sets,
-                    &connection_section_sets,
-                );
-                incoming_dir_section_sets[to_index(POS_Y)] |=
-                    shift_neg_y(self.outgoing_dir_section_sets[to_index(NEG_Y)]);
-                visible_sections |= incoming_dir_section_sets[to_index(POS_Y)];
-            }
-            if bitset::contains(TRAVERSAL_DIRS, NEG_Z) {
-                self.update_outgoing_dirs::<TRAVERSAL_DIRS, NEG_Z>(
-                    &incoming_dir_section_sets,
-                    &connection_section_sets,
-                );
-                incoming_dir_section_sets[to_index(POS_Z)] |=
-                    shift_neg_z(self.outgoing_dir_section_sets[to_index(NEG_Z)]);
-                visible_sections |= incoming_dir_section_sets[to_index(POS_Z)];
-            }
-            if bitset::contains(TRAVERSAL_DIRS, POS_X) {
-                self.update_outgoing_dirs::<TRAVERSAL_DIRS, POS_X>(
-                    &incoming_dir_section_sets,
-                    &connection_section_sets,
-                );
-                incoming_dir_section_sets[to_index(NEG_X)] |=
-                    shift_pos_x(self.outgoing_dir_section_sets[to_index(POS_X)]);
-                visible_sections |= incoming_dir_section_sets[to_index(NEG_X)];
-            }
-            if bitset::contains(TRAVERSAL_DIRS, POS_Y) {
-                self.update_outgoing_dirs::<TRAVERSAL_DIRS, POS_Y>(
-                    &incoming_dir_section_sets,
-                    &connection_section_sets,
-                );
-                incoming_dir_section_sets[to_index(NEG_Y)] |=
-                    shift_pos_y(self.outgoing_dir_section_sets[to_index(POS_Y)]);
-                visible_sections |= incoming_dir_section_sets[to_index(NEG_Y)];
-            }
-            if bitset::contains(TRAVERSAL_DIRS, POS_Z) {
-                self.update_outgoing_dirs::<TRAVERSAL_DIRS, POS_Z>(
-                    &incoming_dir_section_sets,
-                    &connection_section_sets,
-                );
-                incoming_dir_section_sets[to_index(NEG_Z)] |=
-                    shift_pos_z(self.outgoing_dir_section_sets[to_index(POS_Z)]);
-                visible_sections |= incoming_dir_section_sets[to_index(NEG_Z)];
-            }
+            self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_X>(
+                &mut incoming_dir_section_sets,
+                &traversal_direction_masks,
+                &mut incoming_changed,
+            );
+            self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_Y>(
+                &mut incoming_dir_section_sets,
+                &traversal_direction_masks,
+                &mut incoming_changed,
+            );
+            self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_Z>(
+                &mut incoming_dir_section_sets,
+                &traversal_direction_masks,
+                &mut incoming_changed,
+            );
+            self.try_traverse_dir::<TRAVERSAL_DIRS, POS_X>(
+                &mut incoming_dir_section_sets,
+                &traversal_direction_masks,
+                &mut incoming_changed,
+            );
+            self.try_traverse_dir::<TRAVERSAL_DIRS, POS_Y>(
+                &mut incoming_dir_section_sets,
+                &traversal_direction_masks,
+                &mut incoming_changed,
+            );
+            self.try_traverse_dir::<TRAVERSAL_DIRS, POS_Z>(
+                &mut incoming_dir_section_sets,
+                &traversal_direction_masks,
+                &mut incoming_changed,
+            );
 
-            if visible_sections == previous_visible_sections
-                && self.outgoing_dir_section_sets == previous_outgoing
-                && incoming_dir_section_sets == previous_incoming
-            {
+            if !incoming_changed {
                 break;
-            } else if visible_sections == previous_visible_sections {
-                #[cfg(debug_assertions)]
-                println!("hmm...")
             }
         }
 
         // TODO: AND with existing visible nodes when there are more culling stages
-        self.visible_sections = visible_sections;
+        self.visible_sections = incoming_dir_section_sets
+            .iter()
+            .fold(start_visible_sections, |a, b| a | b);
     }
 
     pub fn setup_center_tile(&mut self, visible_sections: u8x64) {
         let fake_section_sets = [visible_sections; DIRECTION_COUNT];
-        let connection_section_sets = self.connection_section_sets;
 
-        self.update_outgoing_dirs::<ALL_DIRECTIONS, NEG_X>(
+        // TODO: should the traversal masks actually be something here?
+        self.find_outgoing_connections::<ALL_DIRECTIONS, NEG_X>(
             &fake_section_sets,
-            &connection_section_sets,
+            Simd::splat(0xFF),
         );
-        self.update_outgoing_dirs::<ALL_DIRECTIONS, NEG_Y>(
+        self.find_outgoing_connections::<ALL_DIRECTIONS, NEG_Y>(
             &fake_section_sets,
-            &connection_section_sets,
+            Simd::splat(0xFF),
         );
-        self.update_outgoing_dirs::<ALL_DIRECTIONS, NEG_Z>(
+        self.find_outgoing_connections::<ALL_DIRECTIONS, NEG_Z>(
             &fake_section_sets,
-            &connection_section_sets,
+            Simd::splat(0xFF),
         );
-        self.update_outgoing_dirs::<ALL_DIRECTIONS, POS_X>(
+        self.find_outgoing_connections::<ALL_DIRECTIONS, POS_X>(
             &fake_section_sets,
-            &connection_section_sets,
+            Simd::splat(0xFF),
         );
-        self.update_outgoing_dirs::<ALL_DIRECTIONS, POS_Y>(
+        self.find_outgoing_connections::<ALL_DIRECTIONS, POS_Y>(
             &fake_section_sets,
-            &connection_section_sets,
+            Simd::splat(0xFF),
         );
-        self.update_outgoing_dirs::<ALL_DIRECTIONS, POS_Z>(
+        self.find_outgoing_connections::<ALL_DIRECTIONS, POS_Z>(
             &fake_section_sets,
-            &connection_section_sets,
+            Simd::splat(0xFF),
         );
     }
 
-    fn update_outgoing_dirs<const TRAVERSAL_DIRS: u8, const OUTGOING_DIR: u8>(
+    fn try_traverse_dir<const TRAVERSAL_DIRS: u8, const OUTGOING_DIR: u8>(
+        &mut self,
+        incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
+        traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
+        incoming_changed: &mut bool,
+    ) {
+        if bitset::contains(TRAVERSAL_DIRS, OUTGOING_DIR) {
+            let dir_index = to_index(OUTGOING_DIR);
+            let opposite_dir_index = to_index(opposite(OUTGOING_DIR));
+
+            self.find_outgoing_connections::<TRAVERSAL_DIRS, OUTGOING_DIR>(
+                &incoming_dir_section_sets,
+                traversal_direction_masks[dir_index],
+            );
+
+            let outgoing_sections = self.outgoing_dir_section_sets[dir_index];
+            let shifted = match OUTGOING_DIR {
+                NEG_X => shift_neg_x(outgoing_sections),
+                NEG_Y => shift_neg_y(outgoing_sections),
+                NEG_Z => shift_neg_z(outgoing_sections),
+                POS_X => shift_pos_x(outgoing_sections),
+                POS_Y => shift_pos_y(outgoing_sections),
+                POS_Z => shift_pos_z(outgoing_sections),
+                _ => unreachable!(),
+            };
+            // TODO: does this have to be an OR? I think the answer is yes
+            let previous = incoming_dir_section_sets[opposite_dir_index];
+            incoming_dir_section_sets[opposite_dir_index] |= shifted;
+
+            *incoming_changed |= incoming_dir_section_sets[opposite_dir_index] != previous;
+        }
+    }
+
+    fn find_outgoing_connections<const TRAVERSAL_DIRS: u8, const OUTGOING_DIR: u8>(
         &mut self,
         incoming_dir_section_sets: &[u8x64; DIRECTION_COUNT],
-        connection_section_sets: &[u8x64; UNIQUE_CONNECTION_COUNT],
+        traversal_mask: u8x64,
     ) {
+        let opposing_directions =
+            bitset::contains(TRAVERSAL_DIRS, OUTGOING_DIR | opposite(OUTGOING_DIR));
+
         let sections_outgoing = &mut self.outgoing_dir_section_sets[to_index(OUTGOING_DIR)];
 
         let mut masked_traversal_dirs = opposite(TRAVERSAL_DIRS) & !OUTGOING_DIR;
         while masked_traversal_dirs != 0 {
             let incoming_dir = take_one(&mut masked_traversal_dirs);
 
-            *sections_outgoing |= incoming_dir_section_sets[to_index(incoming_dir)]
-                & self.connection_section_sets[connection_index(OUTGOING_DIR, incoming_dir)];
+            let mut connection_sections =
+                self.connection_section_sets[connection_index(OUTGOING_DIR, incoming_dir)];
+
+            if opposing_directions {
+                connection_sections &= traversal_mask;
+            }
+
+            *sections_outgoing |=
+                incoming_dir_section_sets[to_index(incoming_dir)] & connection_sections;
         }
-    }
-
-    // we need to add direction-specific masks when there are pairs of opposing
-    // directions
-    // TODO OPT: this can be optimized further i think with opposite(TRAVERSAL_DIRS)
-    fn mask_connection_section_sets<const TRAVERSAL_DIRS: u8>(
-        &self,
-        traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
-    ) -> [u8x64; UNIQUE_CONNECTION_COUNT] {
-        let use_x_mask = bitset::contains(TRAVERSAL_DIRS, NEG_X | POS_X);
-        let use_y_mask = bitset::contains(TRAVERSAL_DIRS, NEG_Y | POS_Y);
-        let use_z_mask = bitset::contains(TRAVERSAL_DIRS, NEG_Z | POS_Z);
-
-        let mut masked_connection_section_sets = self.connection_section_sets;
-
-        if use_x_mask {
-            for connection_idx in NEG_X_CONNECTION_INDICES {
-                masked_connection_section_sets[connection_idx] &=
-                    traversal_direction_masks[to_index(NEG_X)];
-            }
-            for connection_idx in POS_X_CONNECTION_INDICES {
-                masked_connection_section_sets[connection_idx] &=
-                    traversal_direction_masks[to_index(POS_X)];
-            }
-        }
-
-        if use_y_mask {
-            for connection_idx in NEG_Y_CONNECTION_INDICES {
-                masked_connection_section_sets[connection_idx] &=
-                    traversal_direction_masks[to_index(NEG_Y)];
-            }
-            for connection_idx in POS_Y_CONNECTION_INDICES {
-                masked_connection_section_sets[connection_idx] &=
-                    traversal_direction_masks[to_index(POS_Y)];
-            }
-        }
-
-        if use_z_mask {
-            for connection_idx in NEG_Z_CONNECTION_INDICES {
-                masked_connection_section_sets[connection_idx] &=
-                    traversal_direction_masks[to_index(NEG_Z)];
-            }
-            for connection_idx in POS_Z_CONNECTION_INDICES {
-                masked_connection_section_sets[connection_idx] &=
-                    traversal_direction_masks[to_index(POS_Z)];
-            }
-        }
-
-        masked_connection_section_sets
     }
 }
