@@ -270,8 +270,8 @@ pub fn voxelize_frustum_plane(relative_tile_coords: f32x3, plane: f32x4) -> u8x6
             .to_bits()
             .simd_ge(Simd::splat(SIGN_BIT))
             .select(
-                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
                 Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
             );
 
     Simd::from_slice(
@@ -281,16 +281,16 @@ pub fn voxelize_frustum_plane(relative_tile_coords: f32x3, plane: f32x4) -> u8x6
 
             let dot_products = section_bb_ys.mul_add_fast(
                 Simd::splat(plane[Y]),
-                Simd::splat(
-                    plane[X].mul_add_fast(section_bb_offsets[X], plane[Z] * section_bb_offsets[Z])
-                        + plane[W],
-                ),
+                Simd::splat(plane[X].mul_add_fast(
+                    section_bb_offsets[X],
+                    plane[Z].mul_add_fast(section_bb_offsets[Z], plane[W]),
+                )),
             );
 
             // Increment Z by length of section in blocks after usage of offsets
             section_bb_offsets += Simd::from_xyz(0.0, 0.0, 16.0);
 
-            let tile_x_positions = -dot_products / Simd::splat(plane[X] * 16.0);
+            let tile_x_positions = dot_products / Simd::splat(plane[X] * -16.0);
 
             let tile_x_masks = (Simd::splat(1_i32)
                 << (unsafe { tile_x_positions.to_int_unchecked() } + Simd::splat(1)))

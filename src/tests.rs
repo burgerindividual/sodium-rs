@@ -370,6 +370,7 @@ fn frustum_voxelization_test() {
         Simd::from_array([0.629539371, 0.267188221, 0.729582489, 2046.93347]),
     ];
 
+    let mut failed = false;
     for (idx, &plane) in planes.iter().enumerate() {
         let sane_visible_sections = voxelize_frustum_plane_slow(relative_tile_coords, plane);
         let test_visible_sections = voxelize_frustum_plane(relative_tile_coords, plane);
@@ -378,11 +379,17 @@ fn frustum_voxelization_test() {
             continue;
         }
 
+        failed = true;
+
         println!("Plane {idx} - Sane");
         print_tile(&sane_visible_sections);
 
         println!("Plane {idx} - Test");
         print_tile(&test_visible_sections);
+    }
+
+    if failed {
+        panic!();
     }
 }
 
