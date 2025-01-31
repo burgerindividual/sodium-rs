@@ -57,7 +57,7 @@ impl GraphSearchContext {
         let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
         let global_region_offset =
             (global_camera_pos_int - camera_pos_int.cast::<i32>()) >> Simd::from_xyz(7, 6, 7);
-        let camera_tile_coords = (camera_pos_int >> Simd::splat(7)).cast::<u8>();
+        let camera_tile_coords = (camera_pos_int >> 7).cast::<u8>();
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
 
@@ -72,7 +72,7 @@ impl GraphSearchContext {
             ((camera_pos + Simd::splat(search_distance))
                 .to_int_unchecked::<u16>()
                 .simd_min(Simd::from_xyz(u16::MAX, local_top_block_y, u16::MAX))
-                >> Simd::splat(7))
+                >> 7)
             .cast::<u8>()
                 - camera_tile_coords
         };
@@ -83,7 +83,7 @@ impl GraphSearchContext {
                 - ((camera_pos - Simd::splat(search_distance))
                     .to_int_unchecked::<i16>()
                     .simd_max(Simd::from_xyz(i16::MIN, 0, i16::MIN))
-                    >> Simd::splat(7))
+                    >> 7)
                 .cast::<u8>()
         };
 
@@ -94,7 +94,7 @@ impl GraphSearchContext {
         );
 
         let camera_section_in_tile =
-            (camera_pos_int >> Simd::splat(4)).cast::<u8>() & Simd::splat(0b111);
+            (camera_pos_int >> 4).cast::<u8>() & Simd::splat(0b111);
 
         Self {
             frustum,
@@ -224,10 +224,15 @@ impl GraphSearchContext {
 /// When using this, it is expected that coordinates are relative to the camera
 /// rather than the world origin.
 pub struct LocalFrustum {
-    planes: [f32x4; DIRECTION_COUNT],
+    #[cfg(debug_assertions)]
+    pub planes: [f32x4; DIRECTION_COUNT],
+
     // Plane data ordered component-wise rather than plane-wise. The contents are transposed from
     // the normal plane array
     planes_cw: [Simd<f32, DIRECTION_COUNT>; 4],
+    // TODO: make these private
+    pub planes_bb_offsets: [f32x3; DIRECTION_COUNT],
+    pub planes_scaled: [f32x4; DIRECTION_COUNT],
 }
 
 impl LocalFrustum {
@@ -235,22 +240,49 @@ impl LocalFrustum {
         let planes_cw = array::from_fn(|component_idx| {
             Simd::from_array(planes.map(|plane| plane[component_idx]))
         });
+        let planes_bb_offsets = planes.map(|plane| {
+            plane
+                .resize(Default::default())
+                .to_bits()
+                .simd_ge(Simd::splat(F32_SIGN_BIT))
+                .select(
+                    Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                    Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                )
+        });
+        let planes_scaled = planes.map(|plane| {
+            let mut plane_scaled = plane / Simd::splat(plane[X] * -16.0);
+            // if plane[X] is positive, set plane_scaled[X] to all 1 bits. if plane[X] is
+            // negative, set plane_scaled[X] to all 0 bits
+            plane_scaled[X] = f32::from_bits(!((plane[X].to_bits() as i32) >> 31) as u32);
+            plane_scaled
+        });
 
-        LocalFrustum { planes_cw, planes }
+        LocalFrustum {
+            #[cfg(debug_assertions)]
+            planes,
+            planes_cw,
+            planes_bb_offsets,
+            planes_scaled,
+        }
     }
 
     // TODO OPT: get rid of W by normalizing plane_xs, ys, zs.
     //  potentially can exclude near and far plane
     pub fn test_box(&self, bb: RelativeBoundingBox, results: &mut CombinedTestResults) {
-        const SIGN_BIT: Simd<u32, DIRECTION_COUNT> = Simd::splat(1 << 31);
-
         // These mask shenanigans just check if the sign bit is set for each lane.
         // This is faster than doing a float comparison because we can ignore special
         // float values like infinity, and because we can hint to the compiler to use
         // vblendvps on x86.
-        let is_neg_x = self.planes_cw[X].to_bits().simd_ge(SIGN_BIT);
-        let is_neg_y = self.planes_cw[Y].to_bits().simd_ge(SIGN_BIT);
-        let is_neg_z = self.planes_cw[Z].to_bits().simd_ge(SIGN_BIT);
+        let is_neg_x = self.planes_cw[X]
+            .to_bits()
+            .simd_ge(Simd::splat(F32_SIGN_BIT));
+        let is_neg_y = self.planes_cw[Y]
+            .to_bits()
+            .simd_ge(Simd::splat(F32_SIGN_BIT));
+        let is_neg_z = self.planes_cw[Z]
+            .to_bits()
+            .simd_ge(Simd::splat(F32_SIGN_BIT));
 
         let bb_min_x = Simd::splat(bb.min[X]);
         let bb_max_x = Simd::splat(bb.max[X]);
@@ -278,7 +310,9 @@ impl LocalFrustum {
 
         // the resize is necessary here because it allows LLVM to generate a vptest on
         // x86
-        let any_outside = ((outside_length_sq + self.planes_cw[W]).to_bits() & SIGN_BIT).resize(0)
+        let any_outside = ((outside_length_sq + self.planes_cw[W]).to_bits()
+            & Simd::splat(F32_SIGN_BIT))
+        .resize(0)
             != u32x8::splat(0);
 
         if any_outside {
@@ -296,7 +330,9 @@ impl LocalFrustum {
             self.planes_cw[Y].mul_add_fast(inside_bounds_y, self.planes_cw[Z] * inside_bounds_z),
         );
 
-        let any_partial = ((inside_length_sq + self.planes_cw[W]).to_bits() & SIGN_BIT).resize(0)
+        let any_partial = ((inside_length_sq + self.planes_cw[W]).to_bits()
+            & Simd::splat(F32_SIGN_BIT))
+        .resize(0)
             != u32x8::splat(0);
 
         results.set_partial::<{ CombinedTestResults::FRUSTUM_BIT }>(any_partial);

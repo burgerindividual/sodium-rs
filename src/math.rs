@@ -9,6 +9,8 @@ pub const Y: usize = 1;
 pub const Z: usize = 2;
 pub const W: usize = 3;
 
+pub const F32_SIGN_BIT: u32 = 1 << 31;
+
 // the most common non-po2 length we use is 3, so we create shorthands for it
 pub type i8x3 = Simd<i8, 3>;
 pub type i16x3 = Simd<i16, 3>;

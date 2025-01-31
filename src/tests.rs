@@ -7,6 +7,7 @@ use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
 use crate::bitset::BitSet;
+use crate::graph::context::LocalFrustum;
 use crate::graph::coords::{GraphCoordSpace, LocalTileCoords, LocalTileIndex};
 use crate::graph::direction::*;
 use crate::graph::tile::*;
@@ -361,30 +362,42 @@ fn step_test() {
 fn frustum_voxelization_test() {
     let relative_tile_coords = Simd::from_xyz(-552.477356, -55.7096558, 59.6260223);
 
-    let planes = [
+    // TODO: the order of these is wrong
+    let frustum = LocalFrustum::new([
         Simd::from_array([-0.24678199, -0.241355747, -0.938533962, 0.0]),
-        Simd::from_array([-0.892519951, -0.241355777, -0.380992979, -0.0]),
         Simd::from_array([-0.594573379, 0.415058464, -0.688628316, 0.0]),
-        Simd::from_array([-0.370376676, -0.823898673, -0.428966165, -0.0]),
         Simd::from_array([-0.629826427, -0.266851544, -0.729458034, -0.0500000082]),
+        Simd::from_array([-0.892519951, -0.241355777, -0.380992979, -0.0]),
+        Simd::from_array([-0.370376676, -0.823898673, -0.428966165, -0.0]),
         Simd::from_array([0.629539371, 0.267188221, 0.729582489, 2046.93347]),
-    ];
+    ]);
 
     let mut failed = false;
-    for (idx, &plane) in planes.iter().enumerate() {
-        let sane_visible_sections = voxelize_frustum_plane_slow(relative_tile_coords, plane);
-        let test_visible_sections = voxelize_frustum_plane(relative_tile_coords, plane);
+    let mut directions = ALL_DIRECTIONS;
+    while directions != 0 {
+        let direction = take_one(&mut directions);
+        let dir_idx = to_index(direction);
+
+        let sane_visible_sections =
+            voxelize_frustum_plane_slow(relative_tile_coords, frustum.planes[dir_idx]);
+        let test_visible_sections = voxelize_frustum_plane(
+            relative_tile_coords,
+            frustum.planes_scaled[dir_idx],
+            frustum.planes_bb_offsets[dir_idx],
+        );
 
         if test_visible_sections == sane_visible_sections {
             continue;
+        } else {
+            failed = true;
         }
 
-        failed = true;
+        let dir_str = to_str(direction);
 
-        println!("Plane {idx} - Sane");
+        println!("Plane {dir_str} - Sane");
         print_tile(&sane_visible_sections);
 
-        println!("Plane {idx} - Test");
+        println!("Plane {dir_str} - Test");
         print_tile(&test_visible_sections);
     }
 

@@ -63,11 +63,11 @@ pub fn print_tile(sections: &u8x64) {
 // generics
 
 pub fn edge_neg_to_pos_x(sections: u8x64) -> u8x64 {
-    sections << Simd::splat(7)
+    sections << 7
 }
 
 pub fn edge_pos_to_neg_x(sections: u8x64) -> u8x64 {
-    sections >> Simd::splat(7)
+    sections >> 7
 }
 
 #[rustfmt::skip]
@@ -143,11 +143,11 @@ pub fn edge_pos_to_neg_z(sections: u8x64) -> u8x64 {
 }
 
 pub fn shift_neg_x(sections: u8x64) -> u8x64 {
-    sections >> Simd::splat(1)
+    sections >> 1
 }
 
 pub fn shift_pos_x(sections: u8x64) -> u8x64 {
-    sections << Simd::splat(1)
+    sections << 1
 }
 
 #[rustfmt::skip]
@@ -258,51 +258,58 @@ pub fn shift_pos_z(sections: u8x64) -> u8x64 {
 }
 
 #[no_mangle]
-// TODO: put this back into Tile, do bitwise AND on visible nodes
-// TODO OPT: pre-calculate partial BB offsets for plane
-// TODO OPT: pre-divide planes with -plane.x, check if this is accurate enough
-pub fn voxelize_frustum_plane(relative_tile_coords: f32x3, plane: f32x4) -> u8x64 {
-    const SIGN_BIT: u32 = 1 << 31;
+pub fn voxelize_frustum_plane(
+    relative_tile_coords: f32x3,
+    plane_scaled: f32x4,
+    plane_bb_offsets: f32x3,
+) -> u8x64 {
+    let mut section_bb_offsets = relative_tile_coords + plane_bb_offsets;
 
-    let mut section_bb_offsets = relative_tile_coords
-        + plane
-            .resize(0.0)
-            .to_bits()
-            .simd_ge(Simd::splat(SIGN_BIT))
-            .select(
-                Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-            );
+    // if plane[X] was positive, this will be all 1 bits. if plane[X] is negative,
+    // this will be all 0 bits.
+    let plane_x_positive_mask = plane_scaled[X].to_bits() as i32;
 
     Simd::from_slice(
         array::from_fn::<_, 8, _>(|_| {
             let section_bb_ys = f32x8::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0])
                 + Simd::splat(section_bb_offsets[Y]);
 
-            let dot_products = section_bb_ys.mul_add_fast(
-                Simd::splat(plane[Y]),
-                Simd::splat(plane[X].mul_add_fast(
-                    section_bb_offsets[X],
-                    plane[Z].mul_add_fast(section_bb_offsets[Z], plane[W]),
+            let tile_x_positions = section_bb_ys.mul_add_fast(
+                Simd::splat(plane_scaled[Y]),
+                Simd::splat(section_bb_offsets[X].mul_add_fast(
+                    const { -1.0 / 16.0 },
+                    section_bb_offsets[Z].mul_add_fast(plane_scaled[Z], plane_scaled[W]),
                 )),
             );
 
             // Increment Z by length of section in blocks after usage of offsets
             section_bb_offsets += Simd::from_xyz(0.0, 0.0, 16.0);
 
-            let tile_x_positions = dot_products / Simd::splat(plane[X] * -16.0);
+            let tile_x_positions_int = unsafe { tile_x_positions.to_int_unchecked::<i32>() };
 
-            let tile_x_masks = (Simd::splat(1_i32)
-                << (unsafe { tile_x_positions.to_int_unchecked() } + Simd::splat(1)))
-                - Simd::splat(1);
-            let tile_x_masks_clamped = tile_x_positions
-                .simd_ge(Simd::splat(8.0))
+            #[cfg(target_feature = "avx2")]
+            let tile_x_single_section_masks: i32x8 = unsafe {
+                use std::arch::x86_64::*;
+                // this lets us skip having to mask tile_x_positions_int
+                _mm256_sllv_epi32(_mm256_set1_epi32(1), tile_x_positions_int.into()).into()
+            };
+            #[cfg(not(target_feature = "avx2"))]
+            let tile_x_single_section_masks = Simd::splat(1_i32) << tile_x_positions_int;
+
+            // conditionally NOT part of the mask using an XOR
+            let tile_x_masks = tile_x_single_section_masks
+                | ((tile_x_single_section_masks - Simd::splat(1))
+                    ^ Simd::splat(plane_x_positive_mask));
+
+            let tile_x_masks_clamped = (tile_x_positions - Simd::splat(8.0))
+                .to_bits()
+                .simd_lt(Simd::splat(F32_SIGN_BIT))
                 .select(
-                    Simd::splat(-1_i32),
+                    !Simd::splat(plane_x_positive_mask),
                     tile_x_positions
                         .to_bits()
-                        .simd_ge(Simd::splat(SIGN_BIT))
-                        .select(Simd::splat(0_i32), tile_x_masks),
+                        .simd_ge(Simd::splat(F32_SIGN_BIT))
+                        .select(Simd::splat(plane_x_positive_mask), tile_x_masks),
                 )
                 .cast();
 
@@ -340,7 +347,6 @@ pub fn voxelize_frustum_plane_slow(relative_tile_coords: f32x3, plane: f32x4) ->
     visible_sections
 }
 
-// TODO: verify these are correct
 pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRECTION_COUNT] {
     let neg_x_lane = (0b10_u8 << camera_section_in_tile[X]).wrapping_sub(1);
     let neg_x_mask = Simd::splat(neg_x_lane);
