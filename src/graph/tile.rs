@@ -1,6 +1,9 @@
+use std::array;
+
 use core_simd::simd::prelude::*;
 use core_simd::simd::ToBytes;
 
+use super::context::RelativeBoundingBox;
 use super::visibility::*;
 use super::{connection_index, u8x3, *};
 use crate::bitset;
@@ -13,7 +16,7 @@ pub const SECTIONS_FILLED: u8x64 = Simd::splat(0xFF);
 pub fn section_index(coords: u8x3) -> u16 {
     debug_assert!(coords.simd_lt(Simd::splat(8)).all());
 
-    ((coords.z() as u16) << 6) | ((coords.y() as u16) << 3) | (coords.x() as u16)
+    ((coords[Z] as u16) << 6) | ((coords[Y] as u16) << 3) | (coords[X] as u16)
 }
 
 pub fn get_bit(sections: &u8x64, index: u16) -> bool {
@@ -35,6 +38,25 @@ pub fn modify_bit(sections: &mut u8x64, index: u16, value: bool) {
     let bit_idx = index as u8 & 0b111;
     let byte = unsafe { sections.as_mut_array().get_unchecked_mut(array_idx) };
     byte.modify_bit(bit_idx, value);
+}
+
+pub fn print_tile(sections: &u8x64) {
+    for z in 0..8 {
+        println!("↓Z{z}");
+        for y in 0..8 {
+            for x in 0..8 {
+                print!(
+                    "{}",
+                    if get_bit(sections, section_index(Simd::from_xyz(x, y, z))) {
+                        1_u8
+                    } else {
+                        0_u8
+                    }
+                );
+            }
+            println!(" Y{y}");
+        }
+    }
 }
 
 // TODO: merge the shift methods and move to edge methods together with const
@@ -235,16 +257,99 @@ pub fn shift_pos_z(sections: u8x64) -> u8x64 {
     )
 }
 
+#[no_mangle]
+// TODO: put this back into Tile, do bitwise AND on visible nodes
+// TODO OPT: pre-calculate partial BB offsets for plane
+// TODO OPT: pre-divide planes with -plane.x, check if this is accurate enough
+pub fn voxelize_frustum_plane(relative_tile_coords: f32x3, plane: f32x4) -> u8x64 {
+    const SIGN_BIT: u32 = 1 << 31;
+
+    let mut section_bb_offsets = relative_tile_coords
+        + plane
+            .resize(0.0)
+            .to_bits()
+            .simd_ge(Simd::splat(SIGN_BIT))
+            .select(
+                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+            );
+
+    Simd::from_slice(
+        array::from_fn::<_, 8, _>(|_| {
+            let section_bb_ys = f32x8::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0])
+                + Simd::splat(section_bb_offsets[Y]);
+
+            let dot_products = section_bb_ys.mul_add_fast(
+                Simd::splat(plane[Y]),
+                Simd::splat(
+                    plane[X].mul_add_fast(section_bb_offsets[X], plane[Z] * section_bb_offsets[Z])
+                        + plane[W],
+                ),
+            );
+
+            // Increment Z by length of section in blocks after usage of offsets
+            section_bb_offsets += Simd::from_xyz(0.0, 0.0, 16.0);
+
+            let tile_x_positions = -dot_products / Simd::splat(plane[X] * 16.0);
+
+            let tile_x_masks = (Simd::splat(1_i32)
+                << (unsafe { tile_x_positions.to_int_unchecked() } + Simd::splat(1)))
+                - Simd::splat(1);
+            let tile_x_masks_clamped = tile_x_positions
+                .simd_ge(Simd::splat(8.0))
+                .select(
+                    Simd::splat(-1_i32),
+                    tile_x_positions
+                        .to_bits()
+                        .simd_ge(Simd::splat(SIGN_BIT))
+                        .select(Simd::splat(0_i32), tile_x_masks),
+                )
+                .cast();
+
+            tile_x_masks_clamped.to_array()
+        })
+        .as_flattened(),
+    )
+}
+
+pub fn voxelize_frustum_plane_slow(relative_tile_coords: f32x3, plane: f32x4) -> u8x64 {
+    let mut visible_sections = SECTIONS_EMPTY;
+
+    for z in 0..8 {
+        for y in 0..8 {
+            for x in 0..8 {
+                let min = u8x3::from_xyz(x, y, z)
+                    .cast::<f32>()
+                    .mul_add_fast(Simd::splat(16.0), relative_tile_coords);
+                let bb = RelativeBoundingBox::new(min, min + Simd::splat(16.0));
+
+                let not_outside = plane[X] * (if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] })
+                    + plane[Y] * (if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] })
+                    + plane[Z] * (if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] })
+                    >= -plane[W];
+
+                modify_bit(
+                    &mut visible_sections,
+                    section_index(Simd::from_xyz(x, y, z)),
+                    not_outside,
+                );
+            }
+        }
+    }
+
+    visible_sections
+}
+
 // TODO: verify these are correct
 pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRECTION_COUNT] {
-    let neg_x_lane = (0b10_u8 << camera_section_in_tile.x()).wrapping_sub(1);
+    let neg_x_lane = (0b10_u8 << camera_section_in_tile[X]).wrapping_sub(1);
     let neg_x_mask = Simd::splat(neg_x_lane);
 
-    let pos_x_lane = 0xFF << camera_section_in_tile.x();
+    let pos_x_lane = 0xFF << camera_section_in_tile[X];
     let pos_x_mask = Simd::splat(pos_x_lane);
 
     // native endianness should be correct here, but it's worth double checking
-    let neg_y_bitmask = (0b10 << camera_section_in_tile.y()) - 1;
+    let neg_y_bitmask = (0b10 << camera_section_in_tile[Y]) - 1;
     let neg_y_lane = u64::from_ne_bytes(
         mask8x8::from_bitmask(neg_y_bitmask)
             .to_int()
@@ -253,7 +358,7 @@ pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DI
     );
     let neg_y_mask = u64x8::splat(neg_y_lane).to_ne_bytes();
 
-    let pos_y_bitmask = 0xFF << camera_section_in_tile.y();
+    let pos_y_bitmask = 0xFF << camera_section_in_tile[Y];
     let pos_y_lane = u64::from_ne_bytes(
         mask8x8::from_bitmask(pos_y_bitmask)
             .to_int()
@@ -262,10 +367,10 @@ pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DI
     );
     let pos_y_mask = u64x8::splat(pos_y_lane).to_ne_bytes();
 
-    let neg_z_bitmask = (0b10 << camera_section_in_tile.z()) - 1;
+    let neg_z_bitmask = (0b10 << camera_section_in_tile[Z]) - 1;
     let neg_z_mask = mask64x8::from_bitmask(neg_z_bitmask).to_int().to_ne_bytes();
 
-    let pos_z_bitmask = 0xFF << camera_section_in_tile.z();
+    let pos_z_bitmask = 0xFF << camera_section_in_tile[Z];
     let pos_z_mask = mask64x8::from_bitmask(pos_z_bitmask).to_int().to_ne_bytes();
 
     [
@@ -284,6 +389,9 @@ pub struct Tile {
     // Changes every time tile is processed
     pub outgoing_dir_section_sets: [u8x64; DIRECTION_COUNT],
     pub visible_sections: u8x64,
+
+    #[cfg(debug_assertions)]
+    pub processed: bool,
 }
 
 impl Default for Tile {
@@ -294,6 +402,8 @@ impl Default for Tile {
             outgoing_dir_section_sets: [SECTIONS_EMPTY; DIRECTION_COUNT],
             // TODO: should this start out as all 1s?
             visible_sections: SECTIONS_EMPTY,
+            #[cfg(debug_assertions)]
+            processed: false,
         }
     }
 }

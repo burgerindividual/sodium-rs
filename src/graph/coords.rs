@@ -1,4 +1,5 @@
 use std::mem::MaybeUninit;
+use std::ops::Index;
 
 use core_simd::simd::prelude::*;
 
@@ -191,21 +192,13 @@ impl Coords3<i8> for LocalTileCoords {
     fn from_xyz(x: i8, y: i8, z: i8) -> Self {
         Self(Simd::from_xyz(x, y, z))
     }
+}
 
-    fn into_tuple(self) -> (i8, i8, i8) {
-        self.0.into_tuple()
-    }
+impl Index<usize> for LocalTileCoords {
+    type Output = i8;
 
-    fn x(&self) -> i8 {
-        self.0.x()
-    }
-
-    fn y(&self) -> i8 {
-        self.0.y()
-    }
-
-    fn z(&self) -> i8 {
-        self.0.z()
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
     }
 }
 

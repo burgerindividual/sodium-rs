@@ -356,5 +356,35 @@ fn step_test() {
     }
 }
 
+// TODO: automate this
+#[test]
+fn frustum_voxelization_test() {
+    let relative_tile_coords = Simd::from_xyz(-552.477356, -55.7096558, 59.6260223);
+
+    let planes = [
+        Simd::from_array([-0.24678199, -0.241355747, -0.938533962, 0.0]),
+        Simd::from_array([-0.892519951, -0.241355777, -0.380992979, -0.0]),
+        Simd::from_array([-0.594573379, 0.415058464, -0.688628316, 0.0]),
+        Simd::from_array([-0.370376676, -0.823898673, -0.428966165, -0.0]),
+        Simd::from_array([-0.629826427, -0.266851544, -0.729458034, -0.0500000082]),
+        Simd::from_array([0.629539371, 0.267188221, 0.729582489, 2046.93347]),
+    ];
+
+    for (idx, &plane) in planes.iter().enumerate() {
+        let sane_visible_sections = voxelize_frustum_plane_slow(relative_tile_coords, plane);
+        let test_visible_sections = voxelize_frustum_plane(relative_tile_coords, plane);
+
+        if test_visible_sections == sane_visible_sections {
+            continue;
+        }
+
+        println!("Plane {idx} - Sane");
+        print_tile(&sane_visible_sections);
+
+        println!("Plane {idx} - Test");
+        print_tile(&test_visible_sections);
+    }
+}
+
 // TODO: test clearing the graph, test searching traversed nodes, test axis and
 // plane masks, test sorted child iterator, test packing indices

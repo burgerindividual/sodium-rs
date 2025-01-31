@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 use std::boxed::Box;
-use std::collections::HashSet;
 
 use context::GraphSearchContext;
 use core_simd::simd::{u8x64, Simd};
@@ -32,7 +31,7 @@ impl<T> From<&[T]> for FFISlice<T> {
 
 #[repr(C)]
 pub struct FFICamera {
-    pub frustum_planes: [[f32; 6]; 4],
+    pub frustum_planes: [[f32; 4]; 6],
     pub pos: [f64; 3],
 }
 
@@ -135,12 +134,7 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
         .expect("expected pointer to camera to be valid");
 
     let simd_camera_pos = Simd::from_array(camera.pos);
-    let simd_frustum_planes = [
-        Simd::from_array(camera.frustum_planes[0]),
-        Simd::from_array(camera.frustum_planes[1]),
-        Simd::from_array(camera.frustum_planes[2]),
-        Simd::from_array(camera.frustum_planes[3]),
-    ];
+    let simd_frustum_planes = camera.frustum_planes.map(|plane| Simd::from_array(plane));
 
     let context = GraphSearchContext::new(
         &graph.coord_space,
@@ -154,6 +148,8 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
 
     #[cfg(debug_assertions)]
     {
+        use std::collections::HashSet;
+
         let mut coords_set = HashSet::<[i32; 3]>::with_capacity(100);
         let mut pointer_set = HashSet::<*const [u64; 8]>::with_capacity(100);
         for tile in &graph.visible_tiles {

@@ -189,6 +189,11 @@ impl Graph {
         // checker rules. these should get optimized out.
         let tile = self.get_tile_mut(index);
 
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(!tile.processed);
+            tile.processed = true;
+        }
         debug_assert_eq!(
             tile.outgoing_dir_section_sets,
             [SECTIONS_EMPTY; DIRECTION_COUNT]
