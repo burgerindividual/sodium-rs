@@ -406,5 +406,4 @@ fn frustum_voxelization_test() {
     }
 }
 
-// TODO: test clearing the graph, test searching traversed nodes, test axis and
-// plane masks, test sorted child iterator, test packing indices
+// TODO: test bfs

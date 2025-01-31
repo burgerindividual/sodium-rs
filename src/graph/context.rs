@@ -73,7 +73,7 @@ impl GraphSearchContext {
                 .to_int_unchecked::<u16>()
                 .simd_min(Simd::from_xyz(u16::MAX, local_top_block_y, u16::MAX))
                 >> 7)
-            .cast::<u8>()
+                .cast::<u8>()
                 - camera_tile_coords
         };
         // we cast from f32 to i16 to u8 here. this is to allow underflowing, as we
@@ -84,7 +84,7 @@ impl GraphSearchContext {
                     .to_int_unchecked::<i16>()
                     .simd_max(Simd::from_xyz(i16::MIN, 0, i16::MIN))
                     >> 7)
-                .cast::<u8>()
+                    .cast::<u8>()
         };
 
         let direction_step_counts = simd_swizzle!(
@@ -93,8 +93,7 @@ impl GraphSearchContext {
             [0, 1, 2, 3, 4, 5,],
         );
 
-        let camera_section_in_tile =
-            (camera_pos_int >> 4).cast::<u8>() & Simd::splat(0b111);
+        let camera_section_in_tile = (camera_pos_int >> 4).cast::<u8>() & Simd::splat(0b111);
 
         Self {
             frustum,
@@ -251,7 +250,14 @@ impl LocalFrustum {
                 )
         });
         let planes_scaled = planes.map(|plane| {
-            let mut plane_scaled = plane / Simd::splat(plane[X] * -16.0);
+            let nonzero_plane_divisor = if plane[X] == 0.0 {
+                // avoids divide by 0 cases, while not being too small as to mess ratios between
+                // the planes
+                1e-15_f32.copysign(-plane[X])
+            } else {
+                plane[X] * -16.0
+            };
+            let mut plane_scaled = plane / Simd::splat(nonzero_plane_divisor);
             // if plane[X] is positive, set plane_scaled[X] to all 1 bits. if plane[X] is
             // negative, set plane_scaled[X] to all 0 bits
             plane_scaled[X] = f32::from_bits(!((plane[X].to_bits() as i32) >> 31) as u32);
