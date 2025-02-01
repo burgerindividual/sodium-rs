@@ -3,10 +3,11 @@ use std::{array, i16};
 use core_simd::simd::prelude::*;
 use std_float::StdFloat;
 
+use crate::graph::tile::print_tile;
 use crate::graph::*;
 
 pub struct GraphSearchContext {
-    frustum: LocalFrustum,
+    pub frustum: LocalFrustum,
 
     pub global_region_offset: i32x3,
 
@@ -30,7 +31,6 @@ pub struct GraphSearchContext {
 }
 
 impl GraphSearchContext {
-    #[no_mangle]
     pub fn new(
         coord_space: &GraphCoordSpace,
         frustum_planes: [f32x4; 6],
@@ -113,11 +113,15 @@ impl GraphSearchContext {
         &self,
         coord_space: &GraphCoordSpace,
         coords: LocalTileCoords,
+        relative_pos: f32x3,
         do_height_checks: bool,
     ) -> CombinedTestResults {
         let mut results = CombinedTestResults::ALL_INSIDE;
 
-        let relative_bounds = self.tile_get_relative_bounds(coords);
+        let relative_bounds = RelativeBoundingBox::new(
+            relative_pos,
+            relative_pos + Simd::splat(LocalTileCoords::LENGTH_IN_BLOCKS as f32),
+        );
 
         self.frustum.test_box(relative_bounds, &mut results);
 
@@ -207,13 +211,9 @@ impl GraphSearchContext {
         results.set_partial::<{ CombinedTestResults::FOG_BIT }>(outside_fog_mask.test(1));
     }
 
-    fn tile_get_relative_bounds(&self, coords: LocalTileCoords) -> RelativeBoundingBox {
+    pub fn tile_relative_pos(&self, coords: LocalTileCoords) -> f32x3 {
         let pos_int = coords.to_local_block_coords() - self.camera_pos_int.cast::<i16>();
-        let pos_float = pos_int.cast::<f32>() - self.camera_pos_frac;
-
-        let tile_size = f32x3::splat(LocalTileCoords::LENGTH_IN_BLOCKS as f32);
-
-        RelativeBoundingBox::new(pos_float, pos_float + tile_size)
+        pos_int.cast::<f32>() - self.camera_pos_frac
     }
 
     // TODO OPT: add douira's magic visible directions culler
@@ -229,9 +229,8 @@ pub struct LocalFrustum {
     // Plane data ordered component-wise rather than plane-wise. The contents are transposed from
     // the normal plane array
     planes_cw: [Simd<f32, DIRECTION_COUNT>; 4],
-    // TODO: make these private
-    pub planes_bb_offsets: [f32x3; DIRECTION_COUNT],
-    pub planes_scaled: [f32x4; DIRECTION_COUNT],
+    pub(crate) plane_bb_offsets: [f32x3; DIRECTION_COUNT],
+    pub(crate) planes_scaled: [f32x4; DIRECTION_COUNT],
 }
 
 impl LocalFrustum {
@@ -239,7 +238,7 @@ impl LocalFrustum {
         let planes_cw = array::from_fn(|component_idx| {
             Simd::from_array(planes.map(|plane| plane[component_idx]))
         });
-        let planes_bb_offsets = planes.map(|plane| {
+        let plane_bb_offsets = planes.map(|plane| {
             plane
                 .resize(Default::default())
                 .to_bits()
@@ -268,7 +267,7 @@ impl LocalFrustum {
             #[cfg(debug_assertions)]
             planes,
             planes_cw,
-            planes_bb_offsets,
+            plane_bb_offsets,
             planes_scaled,
         }
     }
@@ -336,12 +335,56 @@ impl LocalFrustum {
             self.planes_cw[Y].mul_add_fast(inside_bounds_y, self.planes_cw[Z] * inside_bounds_z),
         );
 
-        let any_partial = ((inside_length_sq + self.planes_cw[W]).to_bits()
-            & Simd::splat(F32_SIGN_BIT))
-        .resize(0)
-            != u32x8::splat(0);
+        let intersecting_planes = ((inside_length_sq + self.planes_cw[W])
+            .to_bits()
+            .simd_ge(Simd::splat(F32_SIGN_BIT))
+            .to_bitmask()
+            & 0b111111) as u8;
 
-        results.set_partial::<{ CombinedTestResults::FRUSTUM_BIT }>(any_partial);
+        results.set_intersecting_planes(intersecting_planes);
+    }
+
+    // The inlining of this was pretty aggressive. It's not really necessary and
+    // likely helps the code cache this way.
+    #[inline(never)]
+    pub fn voxelize_planes(
+        &self,
+        mut planes: u8,
+        relative_tile_coords: f32x3,
+        visible_sections: &mut u8x64,
+    ) {
+        while planes != 0 {
+            let plane_direction = take_one(&mut planes);
+            let plane_idx = to_index(plane_direction);
+
+            let sections_in_plane = tile::voxelize_frustum_plane(
+                relative_tile_coords,
+                unsafe { *self.planes_scaled.get_unchecked(plane_idx) },
+                unsafe { *self.plane_bb_offsets.get_unchecked(plane_idx) },
+            );
+
+            #[cfg(debug_assertions)]
+            {
+                let sane_sections_in_plane =
+                    tile::voxelize_frustum_plane_slow(relative_tile_coords, unsafe {
+                        *self.planes.get_unchecked(plane_idx)
+                    });
+                if sections_in_plane != sane_sections_in_plane {
+                    println!("Relative Coords: {:?}", relative_tile_coords);
+                    println!("Frustum: {:#?}", self.planes);
+
+                    let dir_str = to_str(plane_direction);
+                    println!("Plane {dir_str} - Sane");
+                    print_tile(&sane_sections_in_plane);
+                    println!("Plane {dir_str} - Fast");
+                    print_tile(&sections_in_plane);
+
+                    panic!("Mismatch between frustum plane voxel representations");
+                }
+            }
+
+            *visible_sections &= sections_in_plane;
+        }
     }
 }
 
@@ -350,32 +393,38 @@ impl LocalFrustum {
 // 1-bit = Partially inside, partially outside
 // 0-bit = Inside
 #[derive(PartialEq, Copy, Clone)]
-pub struct CombinedTestResults(u8);
+pub struct CombinedTestResults(u16);
 
 impl CombinedTestResults {
-    pub const NONE_INSIDE: Self = Self(0b111);
-    pub const HEIGHT_INSIDE: Self = Self(0b011);
     pub const ALL_INSIDE: Self = Self(0b000);
-    pub const OUTSIDE: Self = Self(0xFF);
+    pub const OUTSIDE: Self = Self(!0);
 
-    pub const FRUSTUM_BIT: u8 = 0b001;
-    pub const FOG_BIT: u8 = 0b010;
-    pub const HEIGHT_BIT: u8 = 0b100;
+    const FRUSTUM_PLANE_BITS: u16 = 0b00111111;
+    pub const FOG_BIT: u16 = 0b01000000;
+    pub const HEIGHT_BIT: u16 = 0b10000000;
 
-    pub fn is_partial<const BIT: u8>(self) -> bool {
-        bitset::contains(self.0, BIT)
+    pub fn is_partial<const BIT: u16>(self) -> bool {
+        bitset::contains_u16(self.0, BIT)
     }
 
-    pub fn set_partial<const BIT: u8>(&mut self, value: bool) {
-        self.0 |= (value as u8) << BIT.trailing_zeros();
+    pub fn set_partial<const BIT: u16>(&mut self, value: bool) {
+        self.0 |= (value as u16) << BIT.trailing_zeros();
+    }
+
+    pub fn set_intersecting_planes(&mut self, value: u8) {
+        self.0 |= value as u16;
+    }
+
+    pub fn get_intersecting_planes(self) -> u8 {
+        (self.0 & Self::FRUSTUM_PLANE_BITS) as u8
     }
 }
 
 /// Relative to the camera position
 #[derive(Clone, Copy)]
 pub struct RelativeBoundingBox {
-    pub min: f32x3,
-    pub max: f32x3,
+    pub(crate) min: f32x3,
+    pub(crate) max: f32x3,
 }
 
 impl RelativeBoundingBox {

@@ -360,16 +360,17 @@ fn step_test() {
 // TODO: automate this
 #[test]
 fn frustum_voxelization_test() {
-    let relative_tile_coords = Simd::from_xyz(-552.477356, -55.7096558, 59.6260223);
+    // let relative_tile_coords = Simd::from_xyz(-552.477356, -55.7096558,
+    // 59.6260223);
+    let relative_tile_coords = Simd::from_xyz(-168.475, -183.705, -63.434998);
 
-    // TODO: the order of these is wrong
     let frustum = LocalFrustum::new([
-        Simd::from_array([-0.24678199, -0.241355747, -0.938533962, 0.0]),
-        Simd::from_array([-0.594573379, 0.415058464, -0.688628316, 0.0]),
-        Simd::from_array([-0.629826427, -0.266851544, -0.729458034, -0.0500000082]),
-        Simd::from_array([-0.892519951, -0.241355777, -0.380992979, -0.0]),
-        Simd::from_array([-0.370376676, -0.823898673, -0.428966165, -0.0]),
-        Simd::from_array([0.629539371, 0.267188221, 0.729582489, 2046.93347]),
+        Simd::from_array([-0.591241, -0.49853715, 0.6339517, 0.0]),
+        Simd::from_array([-0.23236583, 0.1140805, 0.96591496, 0.0]),
+        Simd::from_array([-0.19515383, -0.55120045, 0.81122935, -0.049999997]),
+        Simd::from_array([0.23822449, -0.49853715, 0.8334925, -0.0]),
+        Simd::from_array([-0.06662716, -0.9585686, 0.27696052, -0.0]),
+        Simd::from_array([0.1951034, 0.55120337, -0.81123954, 512.102]),
     ]);
 
     let mut failed = false;
@@ -383,7 +384,7 @@ fn frustum_voxelization_test() {
         let test_visible_sections = voxelize_frustum_plane(
             relative_tile_coords,
             frustum.planes_scaled[dir_idx],
-            frustum.planes_bb_offsets[dir_idx],
+            frustum.plane_bb_offsets[dir_idx],
         );
 
         if test_visible_sections == sane_visible_sections {

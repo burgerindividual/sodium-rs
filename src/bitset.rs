@@ -1,7 +1,11 @@
 use std::hint::assert_unchecked;
 use std::ops::{BitAnd, BitOr, Not, Shl, Shr};
 
-pub const fn contains(bitset: u8, other_bitset: u8) -> bool {
+pub const fn contains_u8(bitset: u8, other_bitset: u8) -> bool {
+    bitset & other_bitset == other_bitset
+}
+
+pub const fn contains_u16(bitset: u16, other_bitset: u16) -> bool {
     bitset & other_bitset == other_bitset
 }
 

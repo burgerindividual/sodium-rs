@@ -257,7 +257,6 @@ pub fn shift_pos_z(sections: u8x64) -> u8x64 {
     )
 }
 
-#[no_mangle]
 pub fn voxelize_frustum_plane(
     relative_tile_coords: f32x3,
     plane_scaled: f32x4,
@@ -268,6 +267,7 @@ pub fn voxelize_frustum_plane(
     // if plane[X] was positive, this will be all 1 bits. if plane[X] is negative,
     // this will be all 0 bits.
     let plane_x_positive_mask = plane_scaled[X].to_bits() as i32;
+    // let plane_x_positive_mask = !((plane[X].to_bits() as i32) >> 31);
 
     Simd::from_slice(
         array::from_fn::<_, 8, _>(|_| {
@@ -282,24 +282,43 @@ pub fn voxelize_frustum_plane(
                 )),
             );
 
+            // let dot_products = section_bb_ys.mul_add_fast(
+            //     Simd::splat(plane[Y]),
+            //     Simd::splat(section_bb_offsets[X].mul_add_fast(
+            //         plane[X],
+            //         section_bb_offsets[Z].mul_add_fast(plane[Z], plane[W]),
+            //     )),
+            // );
+
+            // let tile_x_positions = -dot_products / Simd::splat(plane[X] * 16.0);
+
             // Increment Z by length of section in blocks after usage of offsets
             section_bb_offsets += Simd::from_xyz(0.0, 0.0, 16.0);
 
             let tile_x_positions_int = unsafe { tile_x_positions.to_int_unchecked::<i32>() };
 
+            // #[cfg(target_feature = "avx2")]
+            // let tile_x_shift: i32x8 = unsafe {
+            //     use std::arch::x86_64::*;
+            //     // this lets us skip having to mask tile_x_positions_int
+            //     _mm256_sllv_epi32(_mm256_set1_epi32(1),
+            // tile_x_positions_int.into()).into() };
+            // #[cfg(not(target_feature = "avx2"))]
+            // let tile_x_shift = Simd::splat(1) << tile_x_positions_int;
+            // conditionally NOT part of the mask using an XOR
+            // let tile_x_masks = tile_x_shift
+            //     | ((tile_x_shift - Simd::splat(1)) ^ Simd::splat(plane_x_positive_mask));
+
             #[cfg(target_feature = "avx2")]
-            let tile_x_single_section_masks: i32x8 = unsafe {
+            let tile_x_shift: i32x8 = unsafe {
                 use std::arch::x86_64::*;
                 // this lets us skip having to mask tile_x_positions_int
-                _mm256_sllv_epi32(_mm256_set1_epi32(1), tile_x_positions_int.into()).into()
+                _mm256_sllv_epi32(_mm256_set1_epi32(0b10), tile_x_positions_int.into()).into()
             };
             #[cfg(not(target_feature = "avx2"))]
-            let tile_x_single_section_masks = Simd::splat(1_i32) << tile_x_positions_int;
-
+            let tile_x_shift = Simd::splat(0b10) << tile_x_positions_int;
             // conditionally NOT part of the mask using an XOR
-            let tile_x_masks = tile_x_single_section_masks
-                | ((tile_x_single_section_masks - Simd::splat(1))
-                    ^ Simd::splat(plane_x_positive_mask));
+            let tile_x_masks = (tile_x_shift - Simd::splat(1)) ^ Simd::splat(plane_x_positive_mask);
 
             let tile_x_masks_clamped = (tile_x_positions - Simd::splat(8.0))
                 .to_bits()
@@ -406,8 +425,8 @@ impl Default for Tile {
             // fully untraversable by default
             connection_section_sets: [SECTIONS_EMPTY; UNIQUE_CONNECTION_COUNT],
             outgoing_dir_section_sets: [SECTIONS_EMPTY; DIRECTION_COUNT],
-            // TODO: should this start out as all 1s?
-            visible_sections: SECTIONS_EMPTY,
+            // All sections are visible, and the culling methods mask parts of this
+            visible_sections: SECTIONS_FILLED,
             #[cfg(debug_assertions)]
             processed: false,
         }
@@ -512,7 +531,7 @@ impl Tile {
         traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
         incoming_changed: &mut bool,
     ) {
-        if bitset::contains(TRAVERSAL_DIRS, OUTGOING_DIR) {
+        if bitset::contains_u8(TRAVERSAL_DIRS, OUTGOING_DIR) {
             let dir_index = to_index(OUTGOING_DIR);
             let opposite_dir_index = to_index(opposite(OUTGOING_DIR));
 
@@ -545,7 +564,7 @@ impl Tile {
         traversal_mask: u8x64,
     ) {
         let opposing_directions =
-            bitset::contains(TRAVERSAL_DIRS, OUTGOING_DIR | opposite(OUTGOING_DIR));
+            bitset::contains_u8(TRAVERSAL_DIRS, OUTGOING_DIR | opposite(OUTGOING_DIR));
 
         let sections_outgoing = &mut self.outgoing_dir_section_sets[to_index(OUTGOING_DIR)];
 
