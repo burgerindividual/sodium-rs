@@ -313,11 +313,11 @@ fn direction_mask_test() {
                             let traversal_directions =
                                 negative.to_bitmask() as u8 | ((positive.to_bitmask() as u8) << 3);
 
-                            let section_idx = section_index(other_tile_coords);
+                            let section_index = section_index(other_tile_coords);
                             for dir_idx in 0..6 {
                                 modify_bit(
                                     &mut sane_camera_direction_masks[dir_idx as usize],
-                                    section_idx,
+                                    section_index,
                                     traversal_directions.get_bit(dir_idx),
                                 );
                             }

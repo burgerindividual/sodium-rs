@@ -3,7 +3,6 @@ use std::{array, i16};
 use core_simd::simd::prelude::*;
 use std_float::StdFloat;
 
-use crate::graph::tile::print_tile;
 use crate::graph::*;
 
 pub struct GraphSearchContext {
@@ -211,7 +210,7 @@ impl GraphSearchContext {
         results.set_partial::<{ CombinedTestResults::FOG_BIT }>(outside_fog_mask.test(1));
     }
 
-    pub fn tile_relative_pos(&self, coords: LocalTileCoords) -> f32x3 {
+    pub fn relative_tile_pos(&self, coords: LocalTileCoords) -> f32x3 {
         let pos_int = coords.to_local_block_coords() - self.camera_pos_int.cast::<i16>();
         pos_int.cast::<f32>() - self.camera_pos_frac
     }
@@ -350,7 +349,7 @@ impl LocalFrustum {
     pub fn voxelize_planes(
         &self,
         mut planes: u8,
-        relative_tile_coords: f32x3,
+        relative_tile_pos: f32x3,
         visible_sections: &mut u8x64,
     ) {
         while planes != 0 {
@@ -358,19 +357,21 @@ impl LocalFrustum {
             let plane_idx = to_index(plane_direction);
 
             let sections_in_plane = tile::voxelize_frustum_plane(
-                relative_tile_coords,
+                relative_tile_pos,
                 unsafe { *self.planes_scaled.get_unchecked(plane_idx) },
                 unsafe { *self.plane_bb_offsets.get_unchecked(plane_idx) },
             );
 
             #[cfg(debug_assertions)]
             {
+                use crate::graph::tile::print_tile;
+
                 let sane_sections_in_plane =
-                    tile::voxelize_frustum_plane_slow(relative_tile_coords, unsafe {
+                    tile::voxelize_frustum_plane_slow(relative_tile_pos, unsafe {
                         *self.planes.get_unchecked(plane_idx)
                     });
                 if sections_in_plane != sane_sections_in_plane {
-                    println!("Relative Coords: {:?}", relative_tile_coords);
+                    println!("Relative Coords: {:?}", relative_tile_pos);
                     println!("Frustum: {:#?}", self.planes);
 
                     let dir_str = to_str(plane_direction);

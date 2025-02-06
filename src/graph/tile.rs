@@ -19,6 +19,20 @@ pub fn section_index(coords: u8x3) -> u16 {
     ((coords[Z] as u16) << 6) | ((coords[Y] as u16) << 3) | (coords[X] as u16)
 }
 
+// pub fn step_section_index(index: u16, direction: u8) -> Option<u16> {
+//     let modifier = match direction {
+//         POS_X => 0b000_000_001_i16,
+//         POS_Y => 0b000_001_000_i16,
+//         POS_Z => 0b001_000_000_i16,
+//         NEG_X => -0b000_000_001_i16,
+//         NEG_Y => -0b000_001_000_i16,
+//         NEG_Z => -0b001_000_000_i16,
+//         _ => unsafe { unreachable_unchecked() },
+//     };
+
+//     let sum = ((index as i16) + modifier) as u16;
+// }
+
 pub fn get_bit(sections: &u8x64, index: u16) -> bool {
     let array_idx = index as usize >> 3;
     let bit_idx = index as u8 & 0b111;
@@ -38,6 +52,13 @@ pub fn modify_bit(sections: &mut u8x64, index: u16, value: bool) {
     let bit_idx = index as u8 & 0b111;
     let byte = unsafe { sections.as_mut_array().get_unchecked_mut(array_idx) };
     byte.modify_bit(bit_idx, value);
+}
+
+pub fn or_bit(sections: &mut u8x64, index: u16, value: bool) {
+    let array_idx = index as usize >> 3;
+    let bit_idx = index as u8 & 0b111;
+    let byte = unsafe { sections.as_mut_array().get_unchecked_mut(array_idx) };
+    byte.or_bit(bit_idx, value);
 }
 
 pub fn print_tile(sections: &u8x64) {
@@ -267,7 +288,6 @@ pub fn voxelize_frustum_plane(
     // if plane[X] was positive, this will be all 1 bits. if plane[X] is negative,
     // this will be all 0 bits.
     let plane_x_positive_mask = plane_scaled[X].to_bits() as i32;
-    // let plane_x_positive_mask = !((plane[X].to_bits() as i32) >> 31);
 
     Simd::from_slice(
         array::from_fn::<_, 8, _>(|_| {
@@ -282,32 +302,10 @@ pub fn voxelize_frustum_plane(
                 )),
             );
 
-            // let dot_products = section_bb_ys.mul_add_fast(
-            //     Simd::splat(plane[Y]),
-            //     Simd::splat(section_bb_offsets[X].mul_add_fast(
-            //         plane[X],
-            //         section_bb_offsets[Z].mul_add_fast(plane[Z], plane[W]),
-            //     )),
-            // );
-
-            // let tile_x_positions = -dot_products / Simd::splat(plane[X] * 16.0);
-
             // Increment Z by length of section in blocks after usage of offsets
             section_bb_offsets += Simd::from_xyz(0.0, 0.0, 16.0);
 
             let tile_x_positions_int = unsafe { tile_x_positions.to_int_unchecked::<i32>() };
-
-            // #[cfg(target_feature = "avx2")]
-            // let tile_x_shift: i32x8 = unsafe {
-            //     use std::arch::x86_64::*;
-            //     // this lets us skip having to mask tile_x_positions_int
-            //     _mm256_sllv_epi32(_mm256_set1_epi32(1),
-            // tile_x_positions_int.into()).into() };
-            // #[cfg(not(target_feature = "avx2"))]
-            // let tile_x_shift = Simd::splat(1) << tile_x_positions_int;
-            // conditionally NOT part of the mask using an XOR
-            // let tile_x_masks = tile_x_shift
-            //     | ((tile_x_shift - Simd::splat(1)) ^ Simd::splat(plane_x_positive_mask));
 
             #[cfg(target_feature = "avx2")]
             let tile_x_shift: i32x8 = unsafe {
@@ -317,6 +315,8 @@ pub fn voxelize_frustum_plane(
             };
             #[cfg(not(target_feature = "avx2"))]
             let tile_x_shift = Simd::splat(0b10) << tile_x_positions_int;
+            // TODO: how does this work? why do we not need to unconditionally include the
+            // section we derived? and why does this even work with negatives at all??
             // conditionally NOT part of the mask using an XOR
             let tile_x_masks = (tile_x_shift - Simd::splat(1)) ^ Simd::splat(plane_x_positive_mask);
 
@@ -440,14 +440,15 @@ impl Tile {
     }
 
     // TODO: review all fast paths
-    // TODO: use existing visible nodes as masks when earlier stages exist
     // TODO: is it necessary to use tile_incoming_directions for the first
     // iteration?
-    pub fn find_visible_sections<const TRAVERSAL_DIRS: u8>(
+    #[inline(never)]
+    pub fn traverse<const TRAVERSAL_DIRS: u8>(
         &mut self,
-        start_visible_sections: u8x64,
+        start_sections: u8x64,
         mut incoming_dir_section_sets: [u8x64; DIRECTION_COUNT],
         traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
+        visibility_mask: u8x64,
     ) {
         // TODO OPT: consider changing this back to "for _ in 0..24" and measure
         loop {
@@ -456,31 +457,37 @@ impl Tile {
             self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_X>(
                 &mut incoming_dir_section_sets,
                 &traversal_direction_masks,
+                visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_Y>(
                 &mut incoming_dir_section_sets,
                 &traversal_direction_masks,
+                visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_Z>(
                 &mut incoming_dir_section_sets,
                 &traversal_direction_masks,
+                visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_X>(
                 &mut incoming_dir_section_sets,
                 &traversal_direction_masks,
+                visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_Y>(
                 &mut incoming_dir_section_sets,
                 &traversal_direction_masks,
+                visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_Z>(
                 &mut incoming_dir_section_sets,
                 &traversal_direction_masks,
+                visibility_mask,
                 &mut incoming_changed,
             );
 
@@ -492,43 +499,40 @@ impl Tile {
         // TODO: AND with existing visible nodes when there are more culling stages
         self.visible_sections = incoming_dir_section_sets
             .iter()
-            .fold(start_visible_sections, |a, b| a | b);
+            .fold(start_sections, |a, b| a | b);
     }
 
-    pub fn setup_center_tile(&mut self, visible_sections: u8x64) {
-        let fake_section_sets = [visible_sections; DIRECTION_COUNT];
+    pub fn setup_center_tile(&mut self, section_index: u16) {
+        let mut outgoing_dirs = ALL_DIRECTIONS;
+        while outgoing_dirs != 0 {
+            let outgoing_dir = take_one(&mut outgoing_dirs);
+            let sections_outgoing = unsafe {
+                self.outgoing_dir_section_sets
+                    .get_unchecked_mut(to_index(outgoing_dir))
+            };
 
-        // TODO: should the traversal masks actually be something here?
-        self.find_outgoing_connections::<ALL_DIRECTIONS, NEG_X>(
-            &fake_section_sets,
-            Simd::splat(0xFF),
-        );
-        self.find_outgoing_connections::<ALL_DIRECTIONS, NEG_Y>(
-            &fake_section_sets,
-            Simd::splat(0xFF),
-        );
-        self.find_outgoing_connections::<ALL_DIRECTIONS, NEG_Z>(
-            &fake_section_sets,
-            Simd::splat(0xFF),
-        );
-        self.find_outgoing_connections::<ALL_DIRECTIONS, POS_X>(
-            &fake_section_sets,
-            Simd::splat(0xFF),
-        );
-        self.find_outgoing_connections::<ALL_DIRECTIONS, POS_Y>(
-            &fake_section_sets,
-            Simd::splat(0xFF),
-        );
-        self.find_outgoing_connections::<ALL_DIRECTIONS, POS_Z>(
-            &fake_section_sets,
-            Simd::splat(0xFF),
-        );
+            let mut incoming_dirs = all_except(outgoing_dir);
+            while incoming_dirs != 0 {
+                let incoming_dir = take_one(&mut incoming_dirs);
+
+                let connected = get_bit(
+                    unsafe {
+                        self.connection_section_sets
+                            .get_unchecked(connection_index(outgoing_dir, incoming_dir))
+                    },
+                    section_index,
+                );
+
+                or_bit(sections_outgoing, section_index, connected);
+            }
+        }
     }
 
     fn try_traverse_dir<const TRAVERSAL_DIRS: u8, const OUTGOING_DIR: u8>(
         &mut self,
         incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
         traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
+        visibility_mask: u8x64,
         incoming_changed: &mut bool,
     ) {
         if bitset::contains_u8(TRAVERSAL_DIRS, OUTGOING_DIR) {
@@ -541,7 +545,7 @@ impl Tile {
             );
 
             let outgoing_sections = self.outgoing_dir_section_sets[dir_index];
-            let shifted = match OUTGOING_DIR {
+            let shifted_masked = match OUTGOING_DIR {
                 NEG_X => shift_neg_x(outgoing_sections),
                 NEG_Y => shift_neg_y(outgoing_sections),
                 NEG_Z => shift_neg_z(outgoing_sections),
@@ -549,10 +553,11 @@ impl Tile {
                 POS_Y => shift_pos_y(outgoing_sections),
                 POS_Z => shift_pos_z(outgoing_sections),
                 _ => unreachable!(),
-            };
+            } & visibility_mask;
+
             // TODO: does this have to be an OR? I think the answer is yes
             let previous = incoming_dir_section_sets[opposite_dir_index];
-            incoming_dir_section_sets[opposite_dir_index] |= shifted;
+            incoming_dir_section_sets[opposite_dir_index] |= shifted_masked;
 
             *incoming_changed |= incoming_dir_section_sets[opposite_dir_index] != previous;
         }
@@ -568,9 +573,9 @@ impl Tile {
 
         let sections_outgoing = &mut self.outgoing_dir_section_sets[to_index(OUTGOING_DIR)];
 
-        let mut masked_traversal_dirs = opposite(TRAVERSAL_DIRS) & !OUTGOING_DIR;
-        while masked_traversal_dirs != 0 {
-            let incoming_dir = take_one(&mut masked_traversal_dirs);
+        let mut incoming_dirs = opposite(TRAVERSAL_DIRS) & !OUTGOING_DIR;
+        while incoming_dirs != 0 {
+            let incoming_dir = take_one(&mut incoming_dirs);
 
             let mut connection_sections =
                 self.connection_section_sets[connection_index(OUTGOING_DIR, incoming_dir)];

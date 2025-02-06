@@ -183,11 +183,11 @@ impl Graph {
 
         // try to quickly determine whether we need to actually traverse the tile using
         // the frustum, fog, etc
-        let relative_pos = context.tile_relative_pos(coords);
+        let relative_tile_pos = context.relative_tile_pos(coords);
         let test_result = context.test_tile(
             &self.coord_space,
             coords,
-            relative_pos,
+            relative_tile_pos,
             self.do_height_checks,
         );
 
@@ -213,33 +213,35 @@ impl Graph {
         if intersecting_planes != 0 {
             context.frustum.voxelize_planes(
                 intersecting_planes,
-                relative_pos,
+                relative_tile_pos,
                 &mut tile.visible_sections,
             );
         }
 
-        // if context.use_occlusion_culling {
-        if false {
-            let mut start_visible_sections = SECTIONS_EMPTY;
+        if context.use_occlusion_culling {
+            let visibility_mask = tile.visible_sections;
+            let mut traverse_start_sections = SECTIONS_EMPTY;
             let mut incoming_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
+            tile.outgoing_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
 
             // the center tile has no incoming directions, so there will be no data from
             // neighboring tiles. instead, we have to place the first set section manually.
             if INCOMING_DIRS == 0 {
                 let tile = self.get_tile_mut(index);
-                let section_idx = tile::section_index(context.camera_section_in_tile);
+                let section_index = tile::section_index(context.camera_section_in_tile);
 
-                tile::set_bit(&mut start_visible_sections, section_idx);
-                tile.setup_center_tile(start_visible_sections);
+                tile::set_bit(&mut traverse_start_sections, section_index);
+                tile.setup_center_tile(section_index);
             } else {
                 self.get_incoming_edges::<INCOMING_DIRS>(
                     coords,
-                    &mut start_visible_sections,
+                    visibility_mask,
+                    &mut traverse_start_sections,
                     &mut incoming_dir_section_sets,
                 );
 
                 // FAST PATH: if we start the traversal with all 0s, we'll end with all 0s.
-                if start_visible_sections == SECTIONS_EMPTY {
+                if traverse_start_sections == SECTIONS_EMPTY {
                     // early exit
                     let tile = self.get_tile_mut(index);
                     tile.set_empty();
@@ -253,11 +255,16 @@ impl Graph {
 
             let tile = self.get_tile_mut(index);
 
-            tile.find_visible_sections::<TRAVERSAL_DIRS>(
-                start_visible_sections,
+            tile.traverse::<TRAVERSAL_DIRS>(
+                traverse_start_sections,
                 incoming_dir_section_sets,
                 &context.camera_direction_masks,
+                visibility_mask,
             );
+
+            for sections in tile.outgoing_dir_section_sets {
+                debug_assert_eq!(sections & visibility_mask, sections, "after traversal");
+            }
         }
 
         let tile = self.get_tile(index);
@@ -278,42 +285,43 @@ impl Graph {
     fn get_incoming_edges<const INCOMING_DIRS: u8>(
         &self,
         coords: LocalTileCoords,
-        visible_sections: &mut u8x64,
+        visibility_mask: u8x64,
+        traverse_start_sections: &mut u8x64,
         incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
     ) {
         if bitset::contains_u8(INCOMING_DIRS, NEG_X) {
-            let incoming_edge = self.get_incoming_edge::<NEG_X>(coords);
-            *visible_sections |= incoming_edge;
+            let incoming_edge = self.get_incoming_edge::<NEG_X>(coords) & visibility_mask;
+            *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(NEG_X)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, NEG_Y) {
-            let incoming_edge = self.get_incoming_edge::<NEG_Y>(coords);
-            *visible_sections |= incoming_edge;
+            let incoming_edge = self.get_incoming_edge::<NEG_Y>(coords) & visibility_mask;
+            *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(NEG_Y)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, NEG_Z) {
-            let incoming_edge = self.get_incoming_edge::<NEG_Z>(coords);
-            *visible_sections |= incoming_edge;
+            let incoming_edge = self.get_incoming_edge::<NEG_Z>(coords) & visibility_mask;
+            *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(NEG_Z)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, POS_X) {
-            let incoming_edge = self.get_incoming_edge::<POS_X>(coords);
-            *visible_sections |= incoming_edge;
+            let incoming_edge = self.get_incoming_edge::<POS_X>(coords) & visibility_mask;
+            *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(POS_X)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, POS_Y) {
-            let incoming_edge = self.get_incoming_edge::<POS_Y>(coords);
-            *visible_sections |= incoming_edge;
+            let incoming_edge = self.get_incoming_edge::<POS_Y>(coords) & visibility_mask;
+            *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(POS_Y)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, POS_Z) {
-            let incoming_edge = self.get_incoming_edge::<POS_Z>(coords);
-            *visible_sections |= incoming_edge;
+            let incoming_edge = self.get_incoming_edge::<POS_Z>(coords) & visibility_mask;
+            *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(POS_Z)] = incoming_edge;
         }
     }
@@ -349,12 +357,12 @@ impl Graph {
         let (tile_coords, section_coords_in_tile) =
             self.coord_space.section_to_tile_coords(section_coords);
         let tile_index = self.coord_space.pack_index(tile_coords);
-        let section_idx = tile::section_index(section_coords_in_tile);
+        let section_index = tile::section_index(section_coords_in_tile);
 
         #[cfg(debug_assertions)]
         println!(
             "Set Section - Section Coords: {:?}, Tile Coords: {:?}, Tile Index: {:?}, Section Index: {:?}, Vis: {}",
-            section_coords, tile_coords.0, tile_index.0, section_idx, visibility_data
+            section_coords, tile_coords.0, tile_index.0, section_index, visibility_data
         );
 
         let tile = self.get_tile_mut(tile_index);
@@ -362,7 +370,7 @@ impl Graph {
         for (array_idx, &bit_idx) in ARRAY_TO_BIT_IDX.iter().enumerate() {
             tile::modify_bit(
                 &mut tile.connection_section_sets[array_idx],
-                section_idx,
+                section_index,
                 visibility_data.get_bit(bit_idx),
             );
         }

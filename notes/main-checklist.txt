@@ -93,7 +93,7 @@ I am not deleting these because I'd like to archive the thought process behind h
 [-] Write more tests
     - check the todo in the tests file for more info
 
-[ ] Frustum voxelization
+[x] Frustum voxelization
 
 [ ] Fog cylinder voxelization
 
@@ -103,7 +103,7 @@ I am not deleting these because I'd like to archive the thought process behind h
 
 [ ] Clear up TODOs in the codebase
 
-[ ] Fix issue with find_visible_nodes giving back all 1 bits
+[x] Fix issue with find_visible_nodes giving back all 1 bits
     - Could be an issue with the direction masks?
     - How are the incoming nodes all 0s???
 
@@ -120,7 +120,7 @@ I am not deleting these because I'd like to archive the thought process behind h
 [ ] Handle being above or below world height
 
 LATER:
-[ ] Multiversioning
+[x] Multiversioning
 
 [ ] Generate visibility lists in a way Java doesn't have to process
 
@@ -139,12 +139,12 @@ LATER:
 [x] Smarter version of Graph.remove_section
     - no longer needed
 
-[ ] Make "use occlusion culling" actually work for disabling in spectator mode
+[x] Make "use occlusion culling" actually work for disabling in spectator mode
     - maybe just traverse the bit inverse of the traversable nodes? i think it could possibly work
 
 [ ] Extensive documentation of the base bfs algorithm, the graph and tile representations, and individual methods
 
-[-] Re-introduce const generic directions
+[x] Re-introduce const generic directions
     - option 1: have lists for different direction combinations, add children to these lists and iterate
     - option 2: have const generic "guaranteed directions" and runtime "possible directions"
 

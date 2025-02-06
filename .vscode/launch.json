@@ -7,7 +7,7 @@
             "request": "attach",
             "processId": "${command:pickProcess}",
             // replace this with the directory of your native
-            "program": "/home/ryan/Documents/projects/sodium-burger/common/src/main/resources/assets/sodium/natives/libnative_cull.so",
+            "program": "/home/ryan/Documents/projects/sodium-burger/common/src/main/resources/assets/sodium/natives/linux-x64-avx2+fma/libnative_cull.so",
             "MIMode": "gdb",
             "sourceFileMap": {
                 "${workspaceRoot}": {

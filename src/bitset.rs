@@ -14,6 +14,8 @@ pub trait BitSet {
     fn set_bit(&mut self, idx: u8);
     fn clear_bit(&mut self, idx: u8);
     fn modify_bit(&mut self, idx: u8, value: bool);
+    fn or_bit(&mut self, idx: u8, value: bool);
+    fn and_bit(&mut self, idx: u8, value: bool);
 }
 
 impl<
@@ -45,5 +47,15 @@ impl<
     fn modify_bit(&mut self, idx: u8, value: bool) {
         unsafe { assert_unchecked(idx < (size_of::<T>() as u8 * 8)) };
         *self = (*self & !(T::from(true) << idx)) | (T::from(value) << idx);
+    }
+
+    fn or_bit(&mut self, idx: u8, value: bool) {
+        unsafe { assert_unchecked(idx < (size_of::<T>() as u8 * 8)) };
+        *self = *self | (T::from(value) << idx);
+    }
+
+    fn and_bit(&mut self, idx: u8, value: bool) {
+        unsafe { assert_unchecked(idx < (size_of::<T>() as u8 * 8)) };
+        *self = *self & (T::from(value) << idx);
     }
 }
