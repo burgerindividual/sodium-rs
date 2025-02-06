@@ -23,7 +23,6 @@ pub struct GraphSearchContext {
     pub camera_tile_coords: LocalTileCoords,
     pub direction_step_counts: Simd<u8, DIRECTION_COUNT>,
 
-    // TODO: actually use this
     pub use_occlusion_culling: bool,
 
     pub camera_direction_masks: [u8x64; DIRECTION_COUNT],
