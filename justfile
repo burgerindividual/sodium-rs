@@ -2,6 +2,16 @@
 minsize command *args:
     RUSTFLAGS="-Ctarget-cpu=x86-64-v3" cargo {{command}} --target x86_64-unknown-linux-gnu -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort --no-default-features --profile minsize {{args}}
 
+# unwinding and backtraces enabled
+releasedebug command *args:
+    RUSTFLAGS="-Ctarget-cpu=x86-64-v3" cargo {{command}} --features backtrace --profile releasedebug {{args}}
+
+devfast command *args:
+    RUSTFLAGS="-Zub-checks -Ctarget-cpu=x86-64-v3" cargo {{command}} --features backtrace --profile devfast {{args}}
+
+dev command *args:
+    RUSTFLAGS="-Zub-checks -Ctarget-cpu=x86-64-v3" cargo {{command}} --features backtrace --profile dev {{args}}
+
 # simple panic handling enabled
 release-build-all-targets *args:
     RUSTFLAGS="-Ctarget-cpu=x86-64-v3" cargo build --target x86_64-unknown-linux-gnu -Z build-std=std,panic_abort -Z build-std-features= --release {{args}}
@@ -28,15 +38,14 @@ release-build-all-targets *args:
     mkdir natives/windows-x64-sse4_1+ssse3 --parents
     -mv target/x86_64-pc-windows-msvc/release/native_cull.dll natives/windows-x64-sse4_1+ssse3/
 
-# unwinding and backtraces enabled
-releasedebug command *args:
-    RUSTFLAGS="-Ctarget-cpu=x86-64-v3" cargo {{command}} --features backtrace --profile releasedebug {{args}}
+    cargo zigbuild --target aarch64-unknown-linux-gnu -Z build-std=std,panic_abort -Z build-std-features= --release {{args}}
+    mkdir natives/linux-arm64 --parents
+    -mv target/aarch64-unknown-linux-gnu/release/libnative_cull.so natives/linux-arm64/
 
-devfast command *args:
-    RUSTFLAGS="-Zub-checks -Ctarget-cpu=x86-64-v3" cargo {{command}} --features backtrace --profile devfast {{args}}
+    cargo zigbuild --target aarch64-apple-darwin -Z build-std=std,panic_abort -Z build-std-features= --release {{args}}
+    mkdir natives/macos-arm64 --parents
+    -mv target/aarch64-apple-darwin/release/libnative_cull.dylib natives/macos-arm64/ || true
 
-dev command *args:
-    RUSTFLAGS="-Zub-checks -Ctarget-cpu=x86-64-v3" cargo {{command}} --features backtrace --profile dev {{args}}
-
-# asm profile="asm" target="":
-#     RUSTFLAGS="-Ctarget-cpu=x86-64-v3" cargo asm --target x86_64-unknown-linux-gnu -Z build-std=std,panic_abort --profile {{profile}} --include-constants {{target}}
+    cargo xwin build --target aarch64-pc-windows-msvc -Z build-std=std,panic_abort -Z build-std-features= --release {{args}}
+    mkdir natives/windows-arm64 --parents
+    -mv target/aarch64-pc-windows-msvc/release/native_cull.dll natives/windows-arm64/

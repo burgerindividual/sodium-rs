@@ -19,20 +19,6 @@ pub fn section_index(coords: u8x3) -> u16 {
     ((coords[Z] as u16) << 6) | ((coords[Y] as u16) << 3) | (coords[X] as u16)
 }
 
-// pub fn step_section_index(index: u16, direction: u8) -> Option<u16> {
-//     let modifier = match direction {
-//         POS_X => 0b000_000_001_i16,
-//         POS_Y => 0b000_001_000_i16,
-//         POS_Z => 0b001_000_000_i16,
-//         NEG_X => -0b000_000_001_i16,
-//         NEG_Y => -0b000_001_000_i16,
-//         NEG_Z => -0b001_000_000_i16,
-//         _ => unsafe { unreachable_unchecked() },
-//     };
-
-//     let sum = ((index as i16) + modifier) as u16;
-// }
-
 pub fn get_bit(sections: &u8x64, index: u16) -> bool {
     let array_idx = index as usize >> 3;
     let bit_idx = index as u8 & 0b111;
@@ -442,7 +428,6 @@ impl Tile {
     // TODO: review all fast paths
     // TODO: is it necessary to use tile_incoming_directions for the first
     // iteration?
-    #[inline(never)]
     pub fn traverse<const TRAVERSAL_DIRS: u8>(
         &mut self,
         start_sections: u8x64,
