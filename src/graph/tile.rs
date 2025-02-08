@@ -16,7 +16,7 @@ pub const SECTIONS_FILLED: u8x64 = Simd::splat(0xFF);
 pub fn section_index(coords: u8x3) -> u16 {
     debug_assert!(coords.simd_lt(Simd::splat(8)).all());
 
-    ((coords[Z] as u16) << 6) | ((coords[Y] as u16) << 3) | (coords[X] as u16)
+    ((coords[Y] as u16) << 6) | ((coords[Z] as u16) << 3) | (coords[X] as u16)
 }
 
 pub fn get_bit(sections: &u8x64, index: u16) -> bool {
@@ -48,9 +48,9 @@ pub fn or_bit(sections: &mut u8x64, index: u16, value: bool) {
 }
 
 pub fn print_tile(sections: &u8x64) {
-    for z in 0..8 {
-        println!("↓Z{z}");
-        for y in 0..8 {
+    for y in 0..8 {
+        println!("↓Y{y}");
+        for z in 0..8 {
             for x in 0..8 {
                 print!(
                     "{}",
@@ -61,7 +61,7 @@ pub fn print_tile(sections: &u8x64) {
                     }
                 );
             }
-            println!(" Y{y}");
+            println!(" Z{z}");
         }
     }
 }
@@ -78,7 +78,7 @@ pub fn edge_pos_to_neg_x(sections: u8x64) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn edge_neg_to_pos_y(sections: u8x64) -> u8x64 {
+pub fn edge_neg_to_pos_z(sections: u8x64) -> u8x64 {
     simd_swizzle!(
         sections,
         Simd::splat(0),
@@ -96,7 +96,7 @@ pub fn edge_neg_to_pos_y(sections: u8x64) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn edge_pos_to_neg_y(sections: u8x64) -> u8x64 {
+pub fn edge_pos_to_neg_z(sections: u8x64) -> u8x64 {
     simd_swizzle!(
         sections,
         Simd::splat(0),
@@ -114,7 +114,7 @@ pub fn edge_pos_to_neg_y(sections: u8x64) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn edge_neg_to_pos_z(sections: u8x64) -> u8x64 {
+pub fn edge_neg_to_pos_y(sections: u8x64) -> u8x64 {
     simd_swizzle!(
         sections,
         Simd::splat(0),
@@ -132,7 +132,7 @@ pub fn edge_neg_to_pos_z(sections: u8x64) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn edge_pos_to_neg_z(sections: u8x64) -> u8x64 {
+pub fn edge_pos_to_neg_y(sections: u8x64) -> u8x64 {
     simd_swizzle!(
         sections,
         Simd::splat(0),
@@ -158,24 +158,24 @@ pub fn shift_pos_x(sections: u8x64) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn shift_neg_y(sections: u8x64) -> u8x64 {
+pub fn shift_neg_z(sections: u8x64) -> u8x64 {
     // The u8x64 "sections" vector represents an 8x8x8 array of bits, with each
     // bit representing a render section. It is indexed with the pattern
-    // ZZZYYYXXX. Because of our indexing scheme, we know that each u8 lane
+    // YYYZZZXXX. Because of our indexing scheme, we know that each u8 lane
     // in the vector represents a row of sections on the X axis.
     // 
     // The array of indices provided to this swizzle can be read with
     // the following diagram:
     // 
-    //     y=0       Y Axis      y=7
-    //  z=0|------------------------
+    //     z=0       Z Axis      z=7
+    //  y=0|------------------------
     //     |
     //     |
-    //  Z  |
+    //  Y  |
     // Axis|
     //     |
     //     |
-    // z=7 |
+    // y=7 |
     // 
     // Keep in mind, a swizzle with an array of indices full of only incrementing
     // indices starting at 0 would result in a completely unmodified vector. That
@@ -191,7 +191,7 @@ pub fn shift_neg_y(sections: u8x64) -> u8x64 {
     // 56, 57, 58, 59, 60, 61, 62, 63,
     // 
     // By shifting each index in that array to the left by 1, this swizzle
-    // operation effectively shifts each X-axis row of sections by -1 on the Y
+    // operation effectively shifts each X-axis row of sections by -1 on the Z
     // axis. The "64" indices seen in this swizzle are used to fill the empty
     // space that the shift left over with zeroes.
     simd_swizzle!(
@@ -211,7 +211,7 @@ pub fn shift_neg_y(sections: u8x64) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn shift_pos_y(sections: u8x64) -> u8x64 {
+pub fn shift_pos_z(sections: u8x64) -> u8x64 {
     simd_swizzle!(
         sections,
         Simd::splat(0),
@@ -229,7 +229,7 @@ pub fn shift_pos_y(sections: u8x64) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn shift_neg_z(sections: u8x64) -> u8x64 {
+pub fn shift_neg_y(sections: u8x64) -> u8x64 {
     simd_swizzle!(
         sections,
         Simd::splat(0),
@@ -247,7 +247,7 @@ pub fn shift_neg_z(sections: u8x64) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn shift_pos_z(sections: u8x64) -> u8x64 {
+pub fn shift_pos_y(sections: u8x64) -> u8x64 {
     simd_swizzle!(
         sections,
         Simd::splat(0),
@@ -277,19 +277,19 @@ pub fn voxelize_frustum_plane(
 
     Simd::from_slice(
         array::from_fn::<_, 8, _>(|_| {
-            let section_bb_ys = f32x8::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0])
-                + Simd::splat(section_bb_offsets[Y]);
+            let section_bb_zs = f32x8::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0])
+                + Simd::splat(section_bb_offsets[Z]);
 
-            let tile_x_positions = section_bb_ys.mul_add_fast(
-                Simd::splat(plane_scaled[Y]),
+            let tile_x_positions = section_bb_zs.mul_add_fast(
+                Simd::splat(plane_scaled[Z]),
                 Simd::splat(section_bb_offsets[X].mul_add_fast(
                     const { -1.0 / 16.0 },
-                    section_bb_offsets[Z].mul_add_fast(plane_scaled[Z], plane_scaled[W]),
+                    section_bb_offsets[Y].mul_add_fast(plane_scaled[Y], plane_scaled[W]),
                 )),
             );
 
-            // Increment Z by length of section in blocks after usage of offsets
-            section_bb_offsets += Simd::from_xyz(0.0, 0.0, 16.0);
+            // Increment Y by length of section in blocks after usage of offsets
+            section_bb_offsets += Simd::from_xyz(0.0, 16.0, 0.0);
 
             let tile_x_positions_int = unsafe { tile_x_positions.to_int_unchecked::<i32>() };
 
@@ -327,8 +327,8 @@ pub fn voxelize_frustum_plane(
 pub fn voxelize_frustum_plane_slow(relative_tile_coords: f32x3, plane: f32x4) -> u8x64 {
     let mut visible_sections = SECTIONS_EMPTY;
 
-    for z in 0..8 {
-        for y in 0..8 {
+    for y in 0..8 {
+        for z in 0..8 {
             for x in 0..8 {
                 let min = u8x3::from_xyz(x, y, z)
                     .cast::<f32>()
@@ -359,39 +359,36 @@ pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DI
     let pos_x_lane = 0xFF << camera_section_in_tile[X];
     let pos_x_mask = Simd::splat(pos_x_lane);
 
-    // native endianness should be correct here, but it's worth double checking
     let neg_y_bitmask = (0b10 << camera_section_in_tile[Y]) - 1;
-    let neg_y_lane = u64::from_ne_bytes(
-        mask8x8::from_bitmask(neg_y_bitmask)
-            .to_int()
-            .to_ne_bytes()
-            .to_array(),
-    );
-    let neg_y_mask = u64x8::splat(neg_y_lane).to_ne_bytes();
+    let neg_y_mask = mask64x8::from_bitmask(neg_y_bitmask).to_int().to_ne_bytes();
 
     let pos_y_bitmask = 0xFF << camera_section_in_tile[Y];
-    let pos_y_lane = u64::from_ne_bytes(
-        mask8x8::from_bitmask(pos_y_bitmask)
+    let pos_y_mask = mask64x8::from_bitmask(pos_y_bitmask).to_int().to_ne_bytes();
+
+    // native endianness should be correct here, but it's worth double checking
+    let neg_z_bitmask = (0b10 << camera_section_in_tile[Z]) - 1;
+    let neg_z_lane = u64::from_ne_bytes(
+        mask8x8::from_bitmask(neg_z_bitmask)
             .to_int()
             .to_ne_bytes()
             .to_array(),
     );
-    let pos_y_mask = u64x8::splat(pos_y_lane).to_ne_bytes();
-
-    let neg_z_bitmask = (0b10 << camera_section_in_tile[Z]) - 1;
-    let neg_z_mask = mask64x8::from_bitmask(neg_z_bitmask).to_int().to_ne_bytes();
+    let neg_z_mask = u64x8::splat(neg_z_lane).to_ne_bytes();
 
     let pos_z_bitmask = 0xFF << camera_section_in_tile[Z];
-    let pos_z_mask = mask64x8::from_bitmask(pos_z_bitmask).to_int().to_ne_bytes();
+    let pos_z_lane = u64::from_ne_bytes(
+        mask8x8::from_bitmask(pos_z_bitmask)
+            .to_int()
+            .to_ne_bytes()
+            .to_array(),
+    );
+    let pos_z_mask = u64x8::splat(pos_z_lane).to_ne_bytes();
 
     [
         neg_x_mask, neg_y_mask, neg_z_mask, pos_x_mask, pos_y_mask, pos_z_mask,
     ]
 }
 
-// TODO: switch to YZX or YXZ indexing from ZYX to allow faster splitting into
-// regions of 8x4x8
-// TODO: maybe just make tiles the size of regions?
 #[derive(Debug)]
 pub struct Tile {
     // Only changes on section update
