@@ -37,14 +37,14 @@ pub struct FFICamera {
 
 #[repr(C)]
 pub struct FFIVisibleSectionsTile {
-    pub origin_region_coords: [i32; 3],
+    pub origin_section_coords: [i32; 3],
     pub visible_sections_ptr: *const [u64; 8],
 }
 
 impl FFIVisibleSectionsTile {
-    pub fn new(origin_region_coords: i32x3, visible_sections: *const u8x64) -> Self {
+    pub fn new(origin_section_coords: i32x3, visible_sections: *const u8x64) -> Self {
         Self {
-            origin_region_coords: origin_region_coords.to_array(),
+            origin_section_coords: origin_section_coords.to_array(),
             visible_sections_ptr: visible_sections.cast::<[u64; 8]>(),
         }
     }
@@ -153,10 +153,10 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
         let mut coords_set = HashSet::<[i32; 3]>::with_capacity(100);
         let mut pointer_set = HashSet::<*const [u64; 8]>::with_capacity(100);
         for tile in &graph.visible_tiles {
-            if coords_set.contains(&tile.origin_region_coords) {
+            if coords_set.contains(&tile.origin_section_coords) {
                 panic!("Duplicate coords found in visible_tiles");
             } else {
-                coords_set.insert(tile.origin_region_coords);
+                coords_set.insert(tile.origin_section_coords);
             }
 
             if pointer_set.contains(&tile.visible_sections_ptr) {

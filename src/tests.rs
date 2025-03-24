@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use core::panic;
 use std::collections::HashMap;
 
 use core_simd::simd::prelude::*;
@@ -20,8 +21,10 @@ fn pack_index_test() {
     let graph_y_bits = 2;
     let graph_xz_bits = 3;
 
-    let graph_y_len_tiles = 1 << graph_y_bits;
-    let graph_xz_len_tiles = 1 << graph_xz_bits;
+    let graph_y_len_tiles = 1_i8 << graph_y_bits;
+    let graph_xz_len_tiles = 1_i8 << graph_xz_bits;
+
+    let index_max = (graph_xz_len_tiles as u16).pow(2) * (graph_y_len_tiles as u16);
 
     let coord_space = GraphCoordSpace::new(graph_xz_bits, graph_y_bits, graph_xz_bits, -4, 19);
     let mut index_coords_map = HashMap::<LocalTileIndex, LocalTileCoords>::new();
@@ -31,6 +34,8 @@ fn pack_index_test() {
             for z in 0..graph_xz_len_tiles {
                 let coords = LocalTileCoords::from_xyz(x, y, z);
                 let index = coord_space.pack_index(coords);
+
+                assert!(index.0 < index_max, "Index too large. Index: {:#018b}, Max: {:#018b}", index.0, index_max);
 
                 let entry = index_coords_map.get(&index);
                 if let Some(&existing_coords) = entry {
@@ -406,5 +411,7 @@ fn frustum_voxelization_test() {
         panic!();
     }
 }
+
+fn douira_direction_mask_test() {}
 
 // TODO: test bfs

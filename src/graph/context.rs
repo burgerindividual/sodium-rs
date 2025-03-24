@@ -8,7 +8,7 @@ use crate::graph::*;
 pub struct GraphSearchContext {
     pub frustum: LocalFrustum,
 
-    pub global_region_offset: i32x3,
+    pub global_section_offset: i32x3,
 
     fog_distance: f32,
 
@@ -53,8 +53,7 @@ impl GraphSearchContext {
         let global_camera_pos_int = unsafe { global_camera_pos_floor.to_int_unchecked::<i32>() };
 
         let camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
-        let global_region_offset =
-            (global_camera_pos_int - camera_pos_int.cast::<i32>()) >> Simd::from_xyz(7, 6, 7);
+        let global_section_offset = (global_camera_pos_int - camera_pos_int.cast::<i32>()) >> 4;
         let camera_tile_coords = (camera_pos_int >> 7).cast::<u8>();
 
         let camera_pos = camera_pos_int.cast::<f32>() + camera_pos_frac;
@@ -95,7 +94,7 @@ impl GraphSearchContext {
 
         Self {
             frustum,
-            global_region_offset,
+            global_section_offset,
             fog_distance: search_distance,
             camera_pos_int,
             camera_pos_frac,

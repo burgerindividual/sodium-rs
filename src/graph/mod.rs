@@ -270,13 +270,13 @@ impl Graph {
         let tile = self.get_tile(index);
 
         if tile.visible_sections != SECTIONS_EMPTY {
-            let local_region_coords = coords.0.cast::<i32>() << Simd::from_xyz(0, 1, 0);
-            let global_region_coords = context.global_region_offset + local_region_coords;
+            let local_section_coords = coords.0.cast::<i32>() << 3;
+            let global_section_coords = context.global_section_offset + local_section_coords;
 
             let visible_sections_ptr = &raw const tile.visible_sections;
 
             self.visible_tiles.push(FFIVisibleSectionsTile::new(
-                global_region_coords,
+                global_section_coords,
                 visible_sections_ptr,
             ));
         }

@@ -11,7 +11,7 @@ use crate::bitset::BitSet;
 use crate::math::Coords3;
 
 pub const SECTIONS_EMPTY: u8x64 = Simd::splat(0);
-pub const SECTIONS_FILLED: u8x64 = Simd::splat(0xFF);
+pub const SECTIONS_FILLED: u8x64 = Simd::splat(!0);
 
 pub fn section_index(coords: u8x3) -> u16 {
     debug_assert!(coords.simd_lt(Simd::splat(8)).all());
@@ -361,7 +361,8 @@ pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DI
 
     let neg_y_bitmask = (0b10 << camera_section_in_tile[Y]) - 1;
     let neg_y_mask = mask64x8::from_bitmask(neg_y_bitmask).to_int().to_ne_bytes();
-
+    
+    // Mask is truncated to u8 by from_bitmask
     let pos_y_bitmask = 0xFF << camera_section_in_tile[Y];
     let pos_y_mask = mask64x8::from_bitmask(pos_y_bitmask).to_int().to_ne_bytes();
 

@@ -37,7 +37,7 @@ impl GraphCoordSpace {
         let mut coord_space = Self {
             // setting the top bit to 1 results in 0 being placed in a dynamic shuffle
             morton_swizzle_pattern: Simd::splat(0b10000000),
-            morton_bitmasks: Simd::splat(0),
+            morton_bitmasks: Simd::splat(!0),
             block_bitmask: (Simd::splat(0b1) << (bit_counts.cast::<u16>() + Simd::splat(7)))
                 - Simd::splat(1),
             tile_bitmask: (Simd::splat(0b1) << bit_counts.cast::<i8>()) - Simd::splat(1),
@@ -79,6 +79,26 @@ impl GraphCoordSpace {
             }
         }
 
+        // let mut idx: usize = 0;
+
+        // for cur_z_bit in 0..z_bits {
+        //     coord_space.morton_swizzle_pattern[idx] = Z as u8;
+        //     coord_space.morton_bitmasks[idx] = 1 << cur_z_bit;
+        //     idx += 1;
+        // }
+
+        // for cur_y_bit in 0..y_bits {
+        //     coord_space.morton_swizzle_pattern[idx] = Y as u8;
+        //     coord_space.morton_bitmasks[idx] = 1 << cur_y_bit;
+        //     idx += 1;
+        // }
+
+        // for cur_x_bit in 0..x_bits {
+        //     coord_space.morton_swizzle_pattern[idx] = X as u8;
+        //     coord_space.morton_bitmasks[idx] = 1 << cur_x_bit;
+        //     idx += 1;
+        // }
+
         coord_space
     }
 
@@ -102,11 +122,12 @@ impl GraphCoordSpace {
             );
 
             // isolate each bit necessary for morton ordering
-            let expanded_morton_bits = _mm_and_si128(expanded_bytes, self.morton_bitmasks.into());
+            let morton_bitmasks = self.morton_bitmasks.into();
+            let expanded_morton_bits = _mm_and_si128(expanded_bytes, morton_bitmasks);
 
-            // check if masked bit is set (!= 0) or unset (== 0) for each lane, then pack
-            // each lane into one bit.
-            !_mm_movemask_epi8(_mm_cmpeq_epi8(expanded_morton_bits, _mm_setzero_si128())) as u16
+            // check if masked bit is set (== lane mask) or unset (== 0) for each lane, then
+            // pack each lane into one bit.
+            _mm_movemask_epi8(_mm_cmpeq_epi8(expanded_morton_bits, morton_bitmasks)) as u16
         };
 
         #[cfg(not(target_feature = "ssse3"))]
@@ -121,9 +142,11 @@ impl GraphCoordSpace {
             // isolate each bit necessary for morton ordering
             let expanded_morton_bits = expanded_bytes & self.morton_bitmasks;
 
-            // check if masked bit is set (!= 0) or unset (== 0) for each lane, then pack
+            // check if masked bit is set (== lane mask) or unset (== 0) for each lane, then pack
             // each lane into one bit.
-            expanded_morton_bits.simd_ne(Simd::splat(0)).to_bitmask() as u16
+            expanded_morton_bits
+                .simd_eq(self.morton_bitmasks)
+                .to_bitmask() as u16
         };
 
         LocalTileIndex(packed_morton_bits)
