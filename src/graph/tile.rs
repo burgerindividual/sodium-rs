@@ -2,6 +2,7 @@ use std::array;
 
 use core_simd::simd::prelude::*;
 use core_simd::simd::ToBytes;
+use std_float::StdFloat;
 
 use super::context::RelativeBoundingBox;
 use super::visibility::*;
@@ -31,6 +32,13 @@ pub fn set_bit(sections: &mut u8x64, index: u16) {
     let bit_idx = index as u8 & 0b111;
     let byte = unsafe { sections.as_mut_array().get_unchecked_mut(array_idx) };
     byte.set_bit(bit_idx);
+}
+
+pub fn clear_bit(sections: &mut u8x64, index: u16) {
+    let array_idx = index as usize >> 3;
+    let bit_idx = index as u8 & 0b111;
+    let byte = unsafe { sections.as_mut_array().get_unchecked_mut(array_idx) };
+    byte.clear_bit(bit_idx);
 }
 
 pub fn modify_bit(sections: &mut u8x64, index: u16, value: bool) {
@@ -352,7 +360,7 @@ pub fn voxelize_frustum_plane_slow(relative_tile_coords: f32x3, plane: f32x4) ->
     visible_sections
 }
 
-pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRECTION_COUNT] {
+pub fn gen_outward_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRECTION_COUNT] {
     let neg_x_lane = (0b10_u8 << camera_section_in_tile[X]).wrapping_sub(1);
     let neg_x_mask = Simd::splat(neg_x_lane);
 
@@ -361,7 +369,7 @@ pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DI
 
     let neg_y_bitmask = (0b10 << camera_section_in_tile[Y]) - 1;
     let neg_y_mask = mask64x8::from_bitmask(neg_y_bitmask).to_int().to_ne_bytes();
-    
+
     // Mask is truncated to u8 by from_bitmask
     let pos_y_bitmask = 0xFF << camera_section_in_tile[Y];
     let pos_y_mask = mask64x8::from_bitmask(pos_y_bitmask).to_int().to_ne_bytes();
@@ -388,6 +396,225 @@ pub fn create_camera_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DI
     [
         neg_x_mask, neg_y_mask, neg_z_mask, pos_x_mask, pos_y_mask, pos_z_mask,
     ]
+}
+
+#[no_mangle]
+pub fn gen_compressed_angle_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8x8) {
+    let neg_x_offset = Simd::splat(-offset_1);
+    let y_offset = Simd::splat(offset_2);
+    let ys = Simd::from_array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+
+    let line_1 = neg_x_offset + y_offset + ys;
+    let line_2 = neg_x_offset - y_offset - ys;
+
+    let lower_bound = line_1.simd_min(line_2);
+    let upper_bound = line_1.simd_max(line_2);
+
+    let lower_bound_ceil_clamped = lower_bound
+        .ceil()
+        .simd_clamp(Simd::splat(0.0), Simd::splat(8.0));
+    let upper_bound_floor = upper_bound.floor();
+
+    let lower_bound_shifts = unsafe {
+        lower_bound_ceil_clamped
+            .to_int_unchecked::<i32>()
+            .cast::<u32>()
+    };
+    let upper_bound_shifts = unsafe {
+        (upper_bound_floor.to_int_unchecked::<i32>() + Simd::splat(1))
+            .simd_clamp(Simd::splat(0), Simd::splat(9))
+            .cast::<u32>()
+    };
+
+    let lower_bound_masks = Simd::splat(!0) << lower_bound_shifts;
+    let upper_bound_masks = !(Simd::splat(!0) << upper_bound_shifts);
+    let combined_mask = lower_bound_masks & upper_bound_masks;
+
+    // Get lowest set bit of the mask if the bound falls on an integer.
+    let lowest_bit_mask = lower_bound.simd_eq(lower_bound_ceil_clamped).select(
+        lower_bound_masks & lower_bound_masks.wrapping_neg(),
+        Simd::splat(0),
+    );
+    // Get highest set bit of the mask if the bound falls on an integer
+    let highest_bit_mask = upper_bound
+        .simd_eq(upper_bound_floor)
+        .select((upper_bound_masks + Simd::splat(1)) >> 1, Simd::splat(0));
+    let reverse_mask = lowest_bit_mask | highest_bit_mask | !combined_mask;
+
+    (combined_mask.cast(), reverse_mask.cast())
+}
+
+#[no_mangle]
+pub fn gen_angle_visibility_masks_pairwise(relative_tile_coords: f32x3) -> [u8x64; 3] {
+    let offsets = relative_tile_coords.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
+
+    let (xy_mask, yx_mask) = gen_compressed_angle_mask_pair(offsets[X], offsets[Z]);
+    let (xz_mask, zx_mask) = gen_compressed_angle_mask_pair(offsets[X], offsets[Z]);
+    let (zy_mask, yz_mask) = gen_compressed_angle_mask_pair(offsets[Z], offsets[Y]);
+
+    let x_mask = expand_xy_angle_mask(yx_mask) & expand_xz_angle_mask(zx_mask);
+    let y_mask = expand_xy_angle_mask(xy_mask) & expand_zy_angle_mask(zy_mask);
+    let z_mask = expand_xz_angle_mask(xz_mask) & expand_zy_angle_mask(yz_mask);
+
+    [x_mask, y_mask, z_mask]
+}
+
+#[inline(never)]
+pub fn gen_angle_visibility_masks(relative_tile_coords: f32x3) -> [u8x64; 3] {
+    let offsets = relative_tile_coords.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
+
+    let xy_mask = expand_xy_angle_mask(gen_compressed_angle_mask(offsets[X], offsets[Y]));
+    let yx_mask = expand_xy_angle_mask(transpose_compressed_angle_mask(gen_compressed_angle_mask(
+        offsets[Y], offsets[X],
+    )));
+
+    let xz_mask = expand_xz_angle_mask(gen_compressed_angle_mask(offsets[X], offsets[Z]));
+    let zx_mask = expand_xz_angle_mask(transpose_compressed_angle_mask(gen_compressed_angle_mask(
+        offsets[Z], offsets[X],
+    )));
+
+    let zy_mask = expand_zy_angle_mask(gen_compressed_angle_mask(offsets[Z], offsets[Y]));
+    let yz_mask = expand_zy_angle_mask(transpose_compressed_angle_mask(gen_compressed_angle_mask(
+        offsets[Y], offsets[Z],
+    )));
+
+    let x_mask = yx_mask & zx_mask;
+    let y_mask = xy_mask & zy_mask;
+    let z_mask = xz_mask & yz_mask;
+
+    [x_mask, y_mask, z_mask]
+}
+
+// This *really* doesn't like being inlined for some reason
+#[inline(never)]
+pub fn gen_compressed_angle_mask(offset_1: f32, offset_2: f32) -> u8x8 {
+    let neg_x_offset = Simd::splat(-offset_1);
+    let y_offset = Simd::splat(offset_2);
+    let ys = Simd::from_array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+
+    let line_1 = neg_x_offset + y_offset + ys;
+    let line_2 = neg_x_offset - y_offset - ys;
+
+    let lower_bound = line_1.simd_min(line_2);
+    let upper_bound = line_1.simd_max(line_2);
+
+    let lower_bound_shifts = unsafe {
+        lower_bound
+            .ceil()
+            .to_int_unchecked::<i32>()
+            .simd_clamp(Simd::splat(0), Simd::splat(8))
+            .cast::<u32>()
+    };
+    // the float -> int conversion will round towards 0, which is the behavior we
+    // want for the upper bound
+    let upper_bound_shifts = unsafe {
+        (upper_bound + Simd::splat(1.0))
+            .to_int_unchecked::<i32>()
+            .simd_clamp(Simd::splat(0), Simd::splat(8))
+            .cast::<u32>()
+    };
+
+    let lower_bound_masks = Simd::splat(!0) << lower_bound_shifts;
+    let upper_bound_masks = !(Simd::splat(!0) << upper_bound_shifts);
+    let combined_mask = (lower_bound_masks & upper_bound_masks).cast();
+
+    combined_mask
+}
+
+pub fn transpose_compressed_angle_mask(mask: u8x8) -> u8x8 {
+    #[rustfmt::skip]
+    const BITMASKS: u8x64 = Simd::from_array([
+        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+        0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
+        0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04,
+        0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+        0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
+        0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+        0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40,
+        0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+    ]);
+
+    #[rustfmt::skip]
+    let shuffled_bytes = simd_swizzle!(
+        mask,
+        [
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+        ]
+    );
+
+    Simd::from_array(
+        (shuffled_bytes & BITMASKS)
+            .simd_eq(BITMASKS)
+            .to_bitmask()
+            .to_ne_bytes(),
+    )
+}
+
+pub fn expand_xy_angle_mask(mask: u8x8) -> u8x64 {
+    simd_swizzle!(
+        mask,
+        [
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3,
+            3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7,
+            7, 7, 7, 7, 7, 7,
+        ]
+    )
+}
+
+pub fn expand_xz_angle_mask(mask: u8x8) -> u8x64 {
+    simd_swizzle!(
+        mask,
+        [
+            0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4,
+            5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1,
+            2, 3, 4, 5, 6, 7,
+        ]
+    )
+}
+
+pub fn expand_zy_angle_mask(mask: u8x8) -> u8x64 {
+    mask8x64::from_bitmask(u64::from_ne_bytes(mask.to_array()))
+        .to_int()
+        .to_ne_bytes()
+}
+
+pub fn gen_angle_visibility_masks_slow(relative_tile_coords: f32x3) -> [u8x64; 3] {
+    let mut x_mask = SECTIONS_FILLED;
+    let mut y_mask = SECTIONS_FILLED;
+    let mut z_mask = SECTIONS_FILLED;
+
+    for y in 0..8_u8 {
+        for z in 0..8_u8 {
+            for x in 0..8_u8 {
+                let section_coords = Simd::from_xyz(x, y, z);
+                let section_index = section_index(section_coords);
+                let relative_section_center = relative_tile_coords
+                    + Simd::splat(8.0)
+                    + (section_coords.cast::<f32>() * Simd::splat(16.0));
+
+                let distances = relative_section_center.abs();
+
+                if distances[X] > distances[Y] || distances[Z] > distances[Y] {
+                    clear_bit(&mut y_mask, section_index)
+                }
+                if distances[X] > distances[Z] || distances[Y] > distances[Z] {
+                    clear_bit(&mut z_mask, section_index)
+                }
+                if distances[Y] > distances[X] || distances[Z] > distances[X] {
+                    clear_bit(&mut x_mask, section_index)
+                }
+            }
+        }
+    }
+
+    [x_mask, y_mask, z_mask]
 }
 
 #[derive(Debug)]

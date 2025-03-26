@@ -25,7 +25,7 @@ pub struct GraphSearchContext {
 
     pub use_occlusion_culling: bool,
 
-    pub camera_direction_masks: [u8x64; DIRECTION_COUNT],
+    pub outward_direction_masks: [u8x64; DIRECTION_COUNT],
 }
 
 impl GraphSearchContext {
@@ -102,7 +102,7 @@ impl GraphSearchContext {
             camera_tile_coords: LocalTileCoords(camera_tile_coords.cast::<i8>()),
             direction_step_counts,
             use_occlusion_culling,
-            camera_direction_masks: tile::create_camera_direction_masks(camera_section_in_tile),
+            outward_direction_masks: tile::gen_outward_direction_masks(camera_section_in_tile),
         }
     }
 

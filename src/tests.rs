@@ -5,16 +5,16 @@ use std::collections::HashMap;
 
 use core_simd::simd::prelude::*;
 use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 
 use crate::bitset::BitSet;
 use crate::graph::context::LocalFrustum;
 use crate::graph::coords::{GraphCoordSpace, LocalTileCoords, LocalTileIndex};
 use crate::graph::direction::*;
 use crate::graph::tile::*;
-use crate::math::{u8x3, Coords3};
+use crate::math::*;
 
-const RANDOM_SEED: u64 = 8427234087098706983;
+const RANDOM_SEED: u64 = 8427234088898706983;
 
 #[test]
 fn pack_index_test() {
@@ -35,7 +35,12 @@ fn pack_index_test() {
                 let coords = LocalTileCoords::from_xyz(x, y, z);
                 let index = coord_space.pack_index(coords);
 
-                assert!(index.0 < index_max, "Index too large. Index: {:#018b}, Max: {:#018b}", index.0, index_max);
+                assert!(
+                    index.0 < index_max,
+                    "Index too large. Index: {:#018b}, Max: {:#018b}",
+                    index.0,
+                    index_max
+                );
 
                 let entry = index_coords_map.get(&index);
                 if let Some(&existing_coords) = entry {
@@ -330,7 +335,7 @@ fn direction_mask_test() {
                     }
                 }
 
-                let test_camera_direction_masks = create_camera_direction_masks(camera_tile_coords);
+                let test_camera_direction_masks = gen_outward_direction_masks(camera_tile_coords);
 
                 let mut directions = ALL_DIRECTIONS;
                 while directions != 0 {
@@ -412,6 +417,49 @@ fn frustum_voxelization_test() {
     }
 }
 
-fn douira_direction_mask_test() {}
+#[test]
+fn angle_visibility_masks_test() {
+    const ITERATIONS: u32 = 10000;
+    let mut rand = StdRng::seed_from_u64(RANDOM_SEED);
+
+    for _ in 0..ITERATIONS {
+        let relative_tile_coords = Simd::from_xyz(
+            // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
+            // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
+            // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
+            rand.random_range(-300.0_f32..300.0_f32),
+            rand.random_range(-300.0_f32..300.0_f32),
+            rand.random_range(-300.0_f32..300.0_f32),
+        );
+
+        let test_masks = gen_angle_visibility_masks(relative_tile_coords);
+        let sane_masks = gen_angle_visibility_masks_slow(relative_tile_coords);
+
+        if sane_masks != test_masks {
+            println!("Sane X Mask");
+            print_tile(&sane_masks[X]);
+            println!();
+            println!("Sane Y Mask");
+            print_tile(&sane_masks[Y]);
+            println!();
+            println!("Sane Z Mask");
+            print_tile(&sane_masks[Z]);
+            println!();
+            println!("Test X Mask");
+            print_tile(&test_masks[X]);
+            println!();
+            println!("Test Y Mask");
+            print_tile(&test_masks[X]);
+            println!();
+            println!("Test Z Mask");
+            print_tile(&test_masks[X]);
+            println!();
+            panic!(
+                "sane != test, Relative Tile Coords: {:?}",
+                relative_tile_coords,
+            );
+        }
+    }
+}
 
 // TODO: test bfs

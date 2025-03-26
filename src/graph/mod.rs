@@ -258,7 +258,7 @@ impl Graph {
             tile.traverse::<TRAVERSAL_DIRS>(
                 traverse_start_sections,
                 incoming_dir_section_sets,
-                &context.camera_direction_masks,
+                &context.outward_direction_masks,
                 visibility_mask,
             );
 
