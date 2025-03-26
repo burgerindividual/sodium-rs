@@ -399,6 +399,33 @@ pub fn gen_outward_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRE
 }
 
 #[no_mangle]
+pub fn gen_angle_visibility_masks(relative_tile_coords: f32x3) -> [u8x64; 3] {
+    let offsets = relative_tile_coords.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
+
+    let (xy_mask_compressed, yx_mask_compressed) =
+        gen_compressed_angle_mask_pair(offsets[X], offsets[Y]);
+    let xy_mask = expand_xy_angle_mask(xy_mask_compressed);
+    let yx_mask = expand_xy_angle_mask(yx_mask_compressed);
+
+    let (xz_mask_compressed, zx_mask_compressed) =
+        gen_compressed_angle_mask_pair(offsets[X], offsets[Z]);
+    let xz_mask = expand_xz_angle_mask(xz_mask_compressed);
+    let zx_mask = expand_xz_angle_mask(zx_mask_compressed);
+
+    let (zy_mask_compressed, yz_mask_compressed) =
+        gen_compressed_angle_mask_pair(offsets[Z], offsets[Y]);
+    let zy_mask = expand_zy_angle_mask(zy_mask_compressed);
+    let yz_mask = expand_zy_angle_mask(yz_mask_compressed);
+
+    let x_mask = yx_mask & zx_mask;
+    let y_mask = xy_mask & zy_mask;
+    let z_mask = xz_mask & yz_mask;
+
+    [x_mask, y_mask, z_mask]
+}
+
+// This *really* doesn't like being inlined for some reason
+#[inline(never)]
 pub fn gen_compressed_angle_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8x8) {
     let neg_x_offset = Simd::splat(-offset_1);
     let y_offset = Simd::splat(offset_2);
@@ -410,13 +437,13 @@ pub fn gen_compressed_angle_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8
     let lower_bound = line_1.simd_min(line_2);
     let upper_bound = line_1.simd_max(line_2);
 
-    let lower_bound_ceil_clamped = lower_bound
+    let lower_bound_clamped_int = lower_bound
         .ceil()
         .simd_clamp(Simd::splat(0.0), Simd::splat(8.0));
     let upper_bound_floor = upper_bound.floor();
 
     let lower_bound_shifts = unsafe {
-        lower_bound_ceil_clamped
+        lower_bound_clamped_int
             .to_int_unchecked::<i32>()
             .cast::<u32>()
     };
@@ -426,135 +453,23 @@ pub fn gen_compressed_angle_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8
             .cast::<u32>()
     };
 
-    let lower_bound_masks = Simd::splat(!0) << lower_bound_shifts;
-    let upper_bound_masks = !(Simd::splat(!0) << upper_bound_shifts);
-    let combined_mask = lower_bound_masks & upper_bound_masks;
+    let lower_bound_mask = Simd::splat(!0) << lower_bound_shifts;
+    let upper_bound_mask = !(Simd::splat(!0) << upper_bound_shifts);
+    let combined_mask = lower_bound_mask & upper_bound_mask;
 
     // Get lowest set bit of the mask if the bound falls on an integer.
-    let lowest_bit_mask = lower_bound.simd_eq(lower_bound_ceil_clamped).select(
-        lower_bound_masks & lower_bound_masks.wrapping_neg(),
+    let lowest_bit_mask = lower_bound.simd_eq(lower_bound_clamped_int).select(
+        lower_bound_mask & lower_bound_mask.wrapping_neg(),
         Simd::splat(0),
     );
     // Get highest set bit of the mask if the bound falls on an integer
     let highest_bit_mask = upper_bound
         .simd_eq(upper_bound_floor)
-        .select((upper_bound_masks + Simd::splat(1)) >> 1, Simd::splat(0));
+        .select((upper_bound_mask + Simd::splat(1)) >> 1, Simd::splat(0));
     let reverse_mask = lowest_bit_mask | highest_bit_mask | !combined_mask;
 
-    (combined_mask.cast(), reverse_mask.cast())
-}
-
-#[no_mangle]
-pub fn gen_angle_visibility_masks_pairwise(relative_tile_coords: f32x3) -> [u8x64; 3] {
-    let offsets = relative_tile_coords.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
-
-    let (xy_mask, yx_mask) = gen_compressed_angle_mask_pair(offsets[X], offsets[Z]);
-    let (xz_mask, zx_mask) = gen_compressed_angle_mask_pair(offsets[X], offsets[Z]);
-    let (zy_mask, yz_mask) = gen_compressed_angle_mask_pair(offsets[Z], offsets[Y]);
-
-    let x_mask = expand_xy_angle_mask(yx_mask) & expand_xz_angle_mask(zx_mask);
-    let y_mask = expand_xy_angle_mask(xy_mask) & expand_zy_angle_mask(zy_mask);
-    let z_mask = expand_xz_angle_mask(xz_mask) & expand_zy_angle_mask(yz_mask);
-
-    [x_mask, y_mask, z_mask]
-}
-
-#[inline(never)]
-pub fn gen_angle_visibility_masks(relative_tile_coords: f32x3) -> [u8x64; 3] {
-    let offsets = relative_tile_coords.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
-
-    let xy_mask = expand_xy_angle_mask(gen_compressed_angle_mask(offsets[X], offsets[Y]));
-    let yx_mask = expand_xy_angle_mask(transpose_compressed_angle_mask(gen_compressed_angle_mask(
-        offsets[Y], offsets[X],
-    )));
-
-    let xz_mask = expand_xz_angle_mask(gen_compressed_angle_mask(offsets[X], offsets[Z]));
-    let zx_mask = expand_xz_angle_mask(transpose_compressed_angle_mask(gen_compressed_angle_mask(
-        offsets[Z], offsets[X],
-    )));
-
-    let zy_mask = expand_zy_angle_mask(gen_compressed_angle_mask(offsets[Z], offsets[Y]));
-    let yz_mask = expand_zy_angle_mask(transpose_compressed_angle_mask(gen_compressed_angle_mask(
-        offsets[Y], offsets[Z],
-    )));
-
-    let x_mask = yx_mask & zx_mask;
-    let y_mask = xy_mask & zy_mask;
-    let z_mask = xz_mask & yz_mask;
-
-    [x_mask, y_mask, z_mask]
-}
-
-// This *really* doesn't like being inlined for some reason
-#[inline(never)]
-pub fn gen_compressed_angle_mask(offset_1: f32, offset_2: f32) -> u8x8 {
-    let neg_x_offset = Simd::splat(-offset_1);
-    let y_offset = Simd::splat(offset_2);
-    let ys = Simd::from_array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
-
-    let line_1 = neg_x_offset + y_offset + ys;
-    let line_2 = neg_x_offset - y_offset - ys;
-
-    let lower_bound = line_1.simd_min(line_2);
-    let upper_bound = line_1.simd_max(line_2);
-
-    let lower_bound_shifts = unsafe {
-        lower_bound
-            .ceil()
-            .to_int_unchecked::<i32>()
-            .simd_clamp(Simd::splat(0), Simd::splat(8))
-            .cast::<u32>()
-    };
-    // the float -> int conversion will round towards 0, which is the behavior we
-    // want for the upper bound
-    let upper_bound_shifts = unsafe {
-        (upper_bound + Simd::splat(1.0))
-            .to_int_unchecked::<i32>()
-            .simd_clamp(Simd::splat(0), Simd::splat(8))
-            .cast::<u32>()
-    };
-
-    let lower_bound_masks = Simd::splat(!0) << lower_bound_shifts;
-    let upper_bound_masks = !(Simd::splat(!0) << upper_bound_shifts);
-    let combined_mask = (lower_bound_masks & upper_bound_masks).cast();
-
-    combined_mask
-}
-
-pub fn transpose_compressed_angle_mask(mask: u8x8) -> u8x8 {
-    #[rustfmt::skip]
-    const BITMASKS: u8x64 = Simd::from_array([
-        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-        0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
-        0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04,
-        0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
-        0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
-        0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-        0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40,
-        0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-    ]);
-
-    #[rustfmt::skip]
-    let shuffled_bytes = simd_swizzle!(
-        mask,
-        [
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-            0, 1, 2, 3, 4, 5, 6, 7,
-        ]
-    );
-
-    Simd::from_array(
-        (shuffled_bytes & BITMASKS)
-            .simd_eq(BITMASKS)
-            .to_bitmask()
-            .to_ne_bytes(),
-    )
+    // cut off upper bits
+    (combined_mask.cast::<u8>(), reverse_mask.cast::<u8>())
 }
 
 pub fn expand_xy_angle_mask(mask: u8x8) -> u8x64 {
