@@ -273,11 +273,11 @@ pub fn shift_pos_y(sections: u8x64) -> u8x64 {
 }
 
 pub fn voxelize_frustum_plane(
-    relative_tile_coords: f32x3,
+    relative_tile_pos: f32x3,
     plane_scaled: f32x4,
     plane_bb_offsets: f32x3,
 ) -> u8x64 {
-    let mut section_bb_offsets = relative_tile_coords + plane_bb_offsets;
+    let mut section_bb_offsets = relative_tile_pos + plane_bb_offsets;
 
     // if plane[X] was positive, this will be all 1 bits. if plane[X] is negative,
     // this will be all 0 bits.
@@ -332,7 +332,7 @@ pub fn voxelize_frustum_plane(
     )
 }
 
-pub fn voxelize_frustum_plane_slow(relative_tile_coords: f32x3, plane: f32x4) -> u8x64 {
+pub fn voxelize_frustum_plane_slow(relative_tile_pos: f32x3, plane: f32x4) -> u8x64 {
     let mut visible_sections = SECTIONS_EMPTY;
 
     for y in 0..8 {
@@ -340,7 +340,7 @@ pub fn voxelize_frustum_plane_slow(relative_tile_coords: f32x3, plane: f32x4) ->
             for x in 0..8 {
                 let min = u8x3::from_xyz(x, y, z)
                     .cast::<f32>()
-                    .mul_add_fast(Simd::splat(16.0), relative_tile_coords);
+                    .mul_add_fast(Simd::splat(16.0), relative_tile_pos);
                 let bb = RelativeBoundingBox::new(min, min + Simd::splat(16.0));
 
                 let not_outside = plane[X] * (if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] })
@@ -398,9 +398,8 @@ pub fn gen_outward_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRE
     ]
 }
 
-#[no_mangle]
-pub fn gen_angle_visibility_masks(relative_tile_coords: f32x3) -> [u8x64; 3] {
-    let offsets = relative_tile_coords.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
+pub fn gen_angle_visibility_masks(relative_tile_pos: f32x3) -> [u8x64; 3] {
+    let offsets = relative_tile_pos.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
 
     let (xy_mask_compressed, yx_mask_compressed) =
         gen_compressed_angle_mask_pair(offsets[X], offsets[Y]);
@@ -472,9 +471,9 @@ pub fn gen_compressed_angle_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8
     (combined_mask.cast::<u8>(), reverse_mask.cast::<u8>())
 }
 
-pub fn expand_xy_angle_mask(mask: u8x8) -> u8x64 {
+pub fn expand_xy_angle_mask(compressed_mask: u8x8) -> u8x64 {
     simd_swizzle!(
-        mask,
+        compressed_mask,
         [
             0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3,
             3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7,
@@ -483,9 +482,9 @@ pub fn expand_xy_angle_mask(mask: u8x8) -> u8x64 {
     )
 }
 
-pub fn expand_xz_angle_mask(mask: u8x8) -> u8x64 {
+pub fn expand_xz_angle_mask(compressed_mask: u8x8) -> u8x64 {
     simd_swizzle!(
-        mask,
+        compressed_mask,
         [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4,
             5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1,
@@ -494,13 +493,14 @@ pub fn expand_xz_angle_mask(mask: u8x8) -> u8x64 {
     )
 }
 
-pub fn expand_zy_angle_mask(mask: u8x8) -> u8x64 {
-    mask8x64::from_bitmask(u64::from_ne_bytes(mask.to_array()))
+pub fn expand_zy_angle_mask(compressed_mask: u8x8) -> u8x64 {
+    mask8x64::from_bitmask(u64::from_ne_bytes(compressed_mask.to_array()))
         .to_int()
         .to_ne_bytes()
 }
 
-pub fn gen_angle_visibility_masks_slow(relative_tile_coords: f32x3) -> [u8x64; 3] {
+#[cfg(test)]
+pub fn gen_angle_visibility_masks_slow(relative_tile_pos: f32x3) -> [u8x64; 3] {
     let mut x_mask = SECTIONS_FILLED;
     let mut y_mask = SECTIONS_FILLED;
     let mut z_mask = SECTIONS_FILLED;
@@ -510,7 +510,7 @@ pub fn gen_angle_visibility_masks_slow(relative_tile_coords: f32x3) -> [u8x64; 3
             for x in 0..8_u8 {
                 let section_coords = Simd::from_xyz(x, y, z);
                 let section_index = section_index(section_coords);
-                let relative_section_center = relative_tile_coords
+                let relative_section_center = relative_tile_pos
                     + Simd::splat(8.0)
                     + (section_coords.cast::<f32>() * Simd::splat(16.0));
 
@@ -572,8 +572,8 @@ impl Tile {
         &mut self,
         start_sections: u8x64,
         mut incoming_dir_section_sets: [u8x64; DIRECTION_COUNT],
-        traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
-        visibility_mask: u8x64,
+        outward_direction_masks: &[u8x64; DIRECTION_COUNT],
+        angle_visibility_masks: &[u8x64; 3],
     ) {
         // TODO OPT: consider changing this back to "for _ in 0..24" and measure
         loop {
@@ -581,38 +581,38 @@ impl Tile {
 
             self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_X>(
                 &mut incoming_dir_section_sets,
-                &traversal_direction_masks,
-                visibility_mask,
+                outward_direction_masks,
+                angle_visibility_masks,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_Y>(
                 &mut incoming_dir_section_sets,
-                &traversal_direction_masks,
-                visibility_mask,
+                outward_direction_masks,
+                angle_visibility_masks,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_Z>(
                 &mut incoming_dir_section_sets,
-                &traversal_direction_masks,
-                visibility_mask,
+                outward_direction_masks,
+                angle_visibility_masks,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_X>(
                 &mut incoming_dir_section_sets,
-                &traversal_direction_masks,
-                visibility_mask,
+                outward_direction_masks,
+                angle_visibility_masks,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_Y>(
                 &mut incoming_dir_section_sets,
-                &traversal_direction_masks,
-                visibility_mask,
+                outward_direction_masks,
+                angle_visibility_masks,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_Z>(
                 &mut incoming_dir_section_sets,
-                &traversal_direction_masks,
-                visibility_mask,
+                outward_direction_masks,
+                angle_visibility_masks,
                 &mut incoming_changed,
             );
 
@@ -622,6 +622,7 @@ impl Tile {
         }
 
         // TODO: AND with existing visible nodes when there are more culling stages
+        //  okay so this happened, what do we do?
         self.visible_sections = incoming_dir_section_sets
             .iter()
             .fold(start_sections, |a, b| a | b);
@@ -656,17 +657,19 @@ impl Tile {
     fn try_traverse_dir<const TRAVERSAL_DIRS: u8, const OUTGOING_DIR: u8>(
         &mut self,
         incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
-        traversal_direction_masks: &[u8x64; DIRECTION_COUNT],
-        visibility_mask: u8x64,
+        outward_direction_masks: &[u8x64; DIRECTION_COUNT],
+        angle_visibility_masks: &[u8x64; 3],
         incoming_changed: &mut bool,
     ) {
         if bitset::contains_u8(TRAVERSAL_DIRS, OUTGOING_DIR) {
             let dir_index = to_index(OUTGOING_DIR);
+            let axis_index = index_dir_to_axis(dir_index);
             let opposite_dir_index = to_index(opposite(OUTGOING_DIR));
 
             self.find_outgoing_connections::<TRAVERSAL_DIRS, OUTGOING_DIR>(
                 &incoming_dir_section_sets,
-                traversal_direction_masks[dir_index],
+                outward_direction_masks[dir_index],
+                angle_visibility_masks[axis_index],
             );
 
             let outgoing_sections = self.outgoing_dir_section_sets[dir_index];
@@ -678,7 +681,7 @@ impl Tile {
                 POS_Y => shift_pos_y(outgoing_sections),
                 POS_Z => shift_pos_z(outgoing_sections),
                 _ => unreachable!(),
-            } & visibility_mask;
+            } & self.visible_sections;
 
             // TODO: does this have to be an OR? I think the answer is yes
             let previous = incoming_dir_section_sets[opposite_dir_index];
@@ -691,11 +694,9 @@ impl Tile {
     fn find_outgoing_connections<const TRAVERSAL_DIRS: u8, const OUTGOING_DIR: u8>(
         &mut self,
         incoming_dir_section_sets: &[u8x64; DIRECTION_COUNT],
-        traversal_mask: u8x64,
+        outward_direction_mask: u8x64,
+        angle_visibility_mask: u8x64,
     ) {
-        let opposing_directions =
-            bitset::contains_u8(TRAVERSAL_DIRS, OUTGOING_DIR | opposite(OUTGOING_DIR));
-
         let sections_outgoing = &mut self.outgoing_dir_section_sets[to_index(OUTGOING_DIR)];
 
         let mut incoming_dirs = opposite(TRAVERSAL_DIRS) & !OUTGOING_DIR;
@@ -705,12 +706,19 @@ impl Tile {
             let mut connection_sections =
                 self.connection_section_sets[connection_index(OUTGOING_DIR, incoming_dir)];
 
-            if opposing_directions {
-                connection_sections &= traversal_mask;
+            if incoming_dir == opposite(OUTGOING_DIR) {
+                connection_sections &= angle_visibility_mask;
             }
 
             *sections_outgoing |=
                 incoming_dir_section_sets[to_index(incoming_dir)] & connection_sections;
+        }
+
+        let opposing_directions =
+            bitset::contains_u8(TRAVERSAL_DIRS, OUTGOING_DIR | opposite(OUTGOING_DIR));
+
+        if opposing_directions {
+            *sections_outgoing &= outward_direction_mask;
         }
     }
 }

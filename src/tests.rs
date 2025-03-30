@@ -370,9 +370,9 @@ fn step_test() {
 // TODO: automate this
 #[test]
 fn frustum_voxelization_test() {
-    // let relative_tile_coords = Simd::from_xyz(-552.477356, -55.7096558,
+    // let relative_tile_pos = Simd::from_xyz(-552.477356, -55.7096558,
     // 59.6260223);
-    let relative_tile_coords = Simd::from_xyz(-168.475, -183.705, -63.434998);
+    let relative_tile_pos = Simd::from_xyz(-168.475, -183.705, -63.434998);
 
     let frustum = LocalFrustum::new([
         Simd::from_array([-0.591241, -0.49853715, 0.6339517, 0.0]),
@@ -390,9 +390,9 @@ fn frustum_voxelization_test() {
         let dir_idx = to_index(direction);
 
         let sane_visible_sections =
-            voxelize_frustum_plane_slow(relative_tile_coords, frustum.planes[dir_idx]);
+            voxelize_frustum_plane_slow(relative_tile_pos, frustum.planes[dir_idx]);
         let test_visible_sections = voxelize_frustum_plane(
-            relative_tile_coords,
+            relative_tile_pos,
             frustum.planes_scaled[dir_idx],
             frustum.plane_bb_offsets[dir_idx],
         );
@@ -423,7 +423,7 @@ fn angle_visibility_masks_test() {
     let mut rand = StdRng::seed_from_u64(RANDOM_SEED);
 
     for _ in 0..ITERATIONS {
-        let relative_tile_coords = Simd::from_xyz(
+        let relative_tile_pos = Simd::from_xyz(
             // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
             // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
             // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
@@ -432,8 +432,8 @@ fn angle_visibility_masks_test() {
             rand.random_range(-300.0_f32..300.0_f32),
         );
 
-        let test_masks = gen_angle_visibility_masks(relative_tile_coords);
-        let sane_masks = gen_angle_visibility_masks_slow(relative_tile_coords);
+        let test_masks = gen_angle_visibility_masks(relative_tile_pos);
+        let sane_masks = gen_angle_visibility_masks_slow(relative_tile_pos);
 
         if sane_masks != test_masks {
             println!("Sane X Mask");
@@ -456,7 +456,7 @@ fn angle_visibility_masks_test() {
             println!();
             panic!(
                 "sane != test, Relative Tile Coords: {:?}",
-                relative_tile_coords,
+                relative_tile_pos,
             );
         }
     }

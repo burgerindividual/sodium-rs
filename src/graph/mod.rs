@@ -255,11 +255,13 @@ impl Graph {
 
             let tile = self.get_tile_mut(index);
 
+            let angle_visibility_masks = tile::gen_angle_visibility_masks(relative_tile_pos);
+
             tile.traverse::<TRAVERSAL_DIRS>(
                 traverse_start_sections,
                 incoming_dir_section_sets,
                 &context.outward_direction_masks,
-                visibility_mask,
+                &angle_visibility_masks,
             );
 
             for sections in tile.outgoing_dir_section_sets {

@@ -17,6 +17,10 @@ pub const fn to_index(direction: u8) -> usize {
     unsafe { NonZero::new_unchecked(direction) }.trailing_zeros() as usize
 }
 
+pub const fn index_dir_to_axis(dir_index: usize) -> usize {
+    dir_index % 3
+}
+
 pub const fn all_except(direction_set: u8) -> u8 {
     ALL_DIRECTIONS & !direction_set
 }
