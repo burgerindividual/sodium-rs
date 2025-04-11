@@ -10,7 +10,7 @@ pub struct GraphSearchContext {
 
     pub global_section_offset: i32x3,
 
-    fog_distance: f32,
+    pub fog_distance: f32,
 
     // the camera coords (in blocks) relative to the local origin, which is the (0, 0, 0) point of
     // the graph. the representation here is slightly different than the representation in
@@ -213,6 +213,11 @@ impl GraphSearchContext {
         pos_int.cast::<f32>() - self.camera_pos_frac
     }
 
+    #[inline(never)]
+    pub fn voxelize_fog_cylinder(&self, relative_tile_pos: f32x3, visible_sections: &mut u8x64) {
+        *visible_sections &= tile::voxelize_fog_cylinder(relative_tile_pos, self.fog_distance);
+    }
+
     // TODO OPT: add douira's magic visible directions culler
     // TODO OPT: add ray culling
 }
@@ -236,14 +241,10 @@ impl LocalFrustum {
             Simd::from_array(planes.map(|plane| plane[component_idx]))
         });
         let plane_bb_offsets = planes.map(|plane| {
-            plane
-                .resize(Default::default())
-                .to_bits()
-                .simd_ge(Simd::splat(F32_SIGN_BIT))
-                .select(
-                    Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-                    Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-                )
+            plane.resize(Default::default()).is_sign_negative().select(
+                Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+            )
         });
         let planes_scaled = planes.map(|plane| {
             let nonzero_plane_divisor = if plane[X] == 0.0 {
@@ -276,15 +277,9 @@ impl LocalFrustum {
         // This is faster than doing a float comparison because we can ignore special
         // float values like infinity, and because we can hint to the compiler to use
         // vblendvps on x86.
-        let is_neg_x = self.planes_cw[X]
-            .to_bits()
-            .simd_ge(Simd::splat(F32_SIGN_BIT));
-        let is_neg_y = self.planes_cw[Y]
-            .to_bits()
-            .simd_ge(Simd::splat(F32_SIGN_BIT));
-        let is_neg_z = self.planes_cw[Z]
-            .to_bits()
-            .simd_ge(Simd::splat(F32_SIGN_BIT));
+        let is_neg_x = self.planes_cw[X].is_sign_negative();
+        let is_neg_y = self.planes_cw[Y].is_sign_negative();
+        let is_neg_z = self.planes_cw[Z].is_sign_negative();
 
         let bb_min_x = Simd::splat(bb.min[X]);
         let bb_max_x = Simd::splat(bb.max[X]);
@@ -333,8 +328,7 @@ impl LocalFrustum {
         );
 
         let intersecting_planes = ((inside_length_sq + self.planes_cw[W])
-            .to_bits()
-            .simd_ge(Simd::splat(F32_SIGN_BIT))
+            .is_sign_negative()
             .to_bitmask()
             & 0b111111) as u8;
 
@@ -427,7 +421,7 @@ pub struct RelativeBoundingBox {
 }
 
 impl RelativeBoundingBox {
-    pub const BOUNDING_BOX_EPSILON: f32 = 1.0 + 0.125;
+    pub const BOUNDING_BOX_EPSILON: f32 = 1.125;
 
     pub fn new(min: f32x3, max: f32x3) -> Self {
         Self {

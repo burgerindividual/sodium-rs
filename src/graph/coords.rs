@@ -113,20 +113,12 @@ impl GraphCoordSpace {
         #[cfg(target_feature = "ssse3")]
         let packed_morton_bits = unsafe {
             use std::arch::x86_64::*;
-            // allocate one byte per bit for each element. each element is still has its
-            // individual bits in linear ordering, but the bytes in the vector are in morton
-            // ordering.
             let expanded_bytes = _mm_shuffle_epi8(
                 broadcasted_coords.into(),
                 self.morton_swizzle_pattern.into(),
             );
-
-            // isolate each bit necessary for morton ordering
             let morton_bitmasks = self.morton_bitmasks.into();
             let expanded_morton_bits = _mm_and_si128(expanded_bytes, morton_bitmasks);
-
-            // check if masked bit is set (== lane mask) or unset (== 0) for each lane, then
-            // pack each lane into one bit.
             _mm_movemask_epi8(_mm_cmpeq_epi8(expanded_morton_bits, morton_bitmasks)) as u16
         };
 
@@ -142,8 +134,8 @@ impl GraphCoordSpace {
             // isolate each bit necessary for morton ordering
             let expanded_morton_bits = expanded_bytes & self.morton_bitmasks;
 
-            // check if masked bit is set (== lane mask) or unset (== 0) for each lane, then pack
-            // each lane into one bit.
+            // check if masked bit is set (== lane mask) or unset (== 0) for each lane, then
+            // pack each lane into one bit.
             expanded_morton_bits
                 .simd_eq(self.morton_bitmasks)
                 .to_bitmask() as u16

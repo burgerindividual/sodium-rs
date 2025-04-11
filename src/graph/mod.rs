@@ -35,7 +35,7 @@ pub struct Graph {
 
     pub coord_space: GraphCoordSpace,
     do_height_checks: bool,
-
+    // TODO: add world height masks here
     pub visible_tiles: Vec<FFIVisibleSectionsTile>,
 }
 
@@ -217,6 +217,14 @@ impl Graph {
                 &mut tile.visible_sections,
             );
         }
+
+        if test_result.is_partial::<{ CombinedTestResults::FOG_BIT }>() {
+            context.voxelize_fog_cylinder(relative_tile_pos, &mut tile.visible_sections);
+        }
+
+        // if test_result.is_partial::<{ CombinedTestResults::HEIGHT_BIT }>() {
+        //     todo!();
+        // }
 
         if context.use_occlusion_culling {
             let visibility_mask = tile.visible_sections;

@@ -14,7 +14,7 @@ use crate::graph::direction::*;
 use crate::graph::tile::*;
 use crate::math::*;
 
-const RANDOM_SEED: u64 = 8427234088898706983;
+const RANDOM_SEED: u64 = 0x0c41ce821df0e3a9;
 
 #[test]
 fn pack_index_test() {
@@ -456,6 +456,40 @@ fn angle_visibility_masks_test() {
             println!();
             panic!(
                 "sane != test, Relative Tile Coords: {:?}",
+                relative_tile_pos,
+            );
+        }
+    }
+}
+
+#[test]
+fn fog_voxelization_test() {
+    const ITERATIONS: u32 = 10000;
+    let mut rand = StdRng::seed_from_u64(RANDOM_SEED);
+
+    for _ in 0..ITERATIONS {
+        let relative_tile_pos = Simd::from_xyz(
+            // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
+            // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
+            // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
+            rand.random_range(-300.0_f32..300.0_f32),
+            rand.random_range(-300.0_f32..300.0_f32),
+            rand.random_range(-300.0_f32..300.0_f32),
+        );
+        let fog_distance = rand.random_range(1.0_f32..300.0_f32);
+
+        let test_result = voxelize_fog_cylinder(relative_tile_pos, fog_distance);
+        let sane_result = voxelize_fog_cylinder_slow(relative_tile_pos, fog_distance);
+
+        if sane_result != test_result {
+            println!("Sane Result");
+            print_tile(&sane_result);
+            println!();
+            println!("Test Result");
+            print_tile(&test_result);
+            println!();
+            panic!(
+                "sane != test, Relative Tile Coords: {:?}, Fog Distance: {fog_distance}",
                 relative_tile_pos,
             );
         }

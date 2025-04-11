@@ -1,5 +1,5 @@
-[ ] Add douira angle culling
-[ ] Add fog culling
+[x] Add douira angle culling
+[x] Add fog culling
     - use vector sqrt for circle rasterization
     - mirror sqrt value to get both positions
 [ ] Fix being above or below world height
