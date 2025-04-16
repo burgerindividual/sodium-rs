@@ -319,7 +319,7 @@ pub fn voxelize_frustum_plane(
                 .select(
                     !Simd::splat(plane_x_positive_mask),
                     tile_x_positions
-                        .is_sign_negative()
+                        .is_sign_negative_fast()
                         .select(Simd::splat(plane_x_positive_mask), tile_x_masks),
                 )
                 .cast();
@@ -434,24 +434,8 @@ pub fn gen_compressed_angle_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8
     let lower_bound = line_1.simd_min(line_2);
     let upper_bound = line_1.simd_max(line_2);
 
-    let lower_bound_ceil_clamped = lower_bound
-        .ceil()
-        .simd_clamp(Simd::splat(0.0), Simd::splat(8.0));
-    let upper_bound_floor = upper_bound.floor();
-
-    let lower_bound_shifts = unsafe {
-        lower_bound_ceil_clamped
-            .to_int_unchecked::<i32>()
-            .cast::<u32>()
-    };
-    let upper_bound_shifts = unsafe {
-        (upper_bound_floor.to_int_unchecked::<i32>() + Simd::splat(1))
-            .simd_clamp(Simd::splat(0), Simd::splat(9))
-            .cast::<u32>()
-    };
-
-    let lower_bound_mask = Simd::splat(!0) << lower_bound_shifts;
-    let upper_bound_mask = !(Simd::splat(!0) << upper_bound_shifts);
+    let (lower_bound_ceil_clamped, upper_bound_floor, lower_bound_mask, upper_bound_mask) =
+        rasterize_rows(lower_bound, upper_bound);
     let combined_mask = lower_bound_mask & upper_bound_mask;
 
     // Get lowest set bit of the mask if the bound falls on an integer.
@@ -497,39 +481,6 @@ pub fn expand_zy_angle_mask(compressed_mask: u8x8) -> u8x64 {
         .to_ne_bytes()
 }
 
-#[cfg(test)]
-pub fn gen_angle_visibility_masks_slow(relative_tile_pos: f32x3) -> [u8x64; 3] {
-    let mut x_mask = SECTIONS_FILLED;
-    let mut y_mask = SECTIONS_FILLED;
-    let mut z_mask = SECTIONS_FILLED;
-
-    for y in 0..8_u8 {
-        for z in 0..8_u8 {
-            for x in 0..8_u8 {
-                let section_coords = Simd::from_xyz(x, y, z);
-                let section_index = section_index(section_coords);
-                let relative_section_center = relative_tile_pos
-                    + Simd::splat(8.0)
-                    + (section_coords.cast::<f32>() * Simd::splat(16.0));
-
-                let distances = relative_section_center.abs();
-
-                if distances[X] > distances[Y] || distances[Z] > distances[Y] {
-                    clear_bit(&mut y_mask, section_index)
-                }
-                if distances[X] > distances[Z] || distances[Y] > distances[Z] {
-                    clear_bit(&mut z_mask, section_index)
-                }
-                if distances[Y] > distances[X] || distances[Z] > distances[X] {
-                    clear_bit(&mut x_mask, section_index)
-                }
-            }
-        }
-    }
-
-    [x_mask, y_mask, z_mask]
-}
-
 pub fn voxelize_fog_cylinder(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {
     const BB_EPSILON: f32 = RelativeBoundingBox::BOUNDING_BOX_EPSILON;
     const BB_EPSILON_SCALED: f32 = BB_EPSILON / 16.0;
@@ -553,28 +504,11 @@ pub fn voxelize_fog_cylinder(relative_tile_pos: f32x3, fog_distance: f32) -> u8x
         Simd::splat(-1.0 - BB_EPSILON_SCALED),
     );
 
-    let lower_bound_ceil_clamped = lower_bound
-        .ceil()
-        .simd_clamp(Simd::splat(0.0), Simd::splat(8.0));
-    let upper_bound_floor = upper_bound.floor();
-
-    let lower_bound_shifts = unsafe {
-        lower_bound_ceil_clamped
-            .to_int_unchecked::<i32>()
-            .cast::<u32>()
-    };
-    let upper_bound_shifts = unsafe {
-        (upper_bound_floor.to_int_unchecked::<i32>() + Simd::splat(1))
-            .simd_clamp(Simd::splat(0), Simd::splat(9))
-            .cast::<u32>()
-    };
-
-    let lower_bound_mask = Simd::splat(!0) << lower_bound_shifts;
-    let upper_bound_mask = !(Simd::splat(!0) << upper_bound_shifts);
+    let (.., lower_bound_mask, upper_bound_mask) = rasterize_rows(lower_bound, upper_bound);
     let out_of_bounds_mask = c_squared.is_sign_positive_fast().to_int().cast::<u32>();
     let combined_mask = (lower_bound_mask & upper_bound_mask & out_of_bounds_mask).cast::<u8>();
 
-    let broadcasted_mask = u64x8::splat(u64::from_ne_bytes(combined_mask.to_array())).to_ne_bytes();
+    let zx_mask = u64x8::splat(u64::from_ne_bytes(combined_mask.to_array())).to_ne_bytes();
 
     let y_lower_bound_mask = (0xFF_u32
         << unsafe {
@@ -595,43 +529,35 @@ pub fn voxelize_fog_cylinder(relative_tile_pos: f32x3, fog_distance: f32) -> u8x
     let y_mask = y_lower_bound_mask & y_upper_bound_mask;
     let y_mask_expanded = mask64x8::from_bitmask(y_mask as u64).to_int().to_ne_bytes();
 
-    broadcasted_mask & y_mask_expanded
+    zx_mask & y_mask_expanded
 }
 
-#[cfg(test)]
-pub fn voxelize_fog_cylinder_slow(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {
-    let mut visible_sections = SECTIONS_EMPTY;
+pub fn rasterize_rows(lower_bound: f32x8, upper_bound: f32x8) -> (f32x8, f32x8, u32x8, u32x8) {
+    let lower_bound_ceil_clamped = lower_bound
+        .ceil()
+        .simd_clamp(Simd::splat(0.0), Simd::splat(8.0));
+    let upper_bound_floor = upper_bound.floor();
 
-    for y in 0..8 {
-        for z in 0..8 {
-            for x in 0..8 {
-                let section_coords = Simd::from_xyz(x, y, z);
-                let section_index = section_index(section_coords);
+    let lower_bound_shifts = unsafe {
+        lower_bound_ceil_clamped
+            .to_int_unchecked::<i32>()
+            .cast::<u32>()
+    };
+    let upper_bound_shifts = unsafe {
+        (upper_bound_floor.to_int_unchecked::<i32>() + Simd::splat(1))
+            .simd_clamp(Simd::splat(0), Simd::splat(9))
+            .cast::<u32>()
+    };
 
-                let relative_section_pos = section_coords
-                    .cast::<f32>()
-                    .mul_add_fast(Simd::splat(16.0), relative_tile_pos);
-                let relative_bounds = RelativeBoundingBox::new(
-                    relative_section_pos,
-                    relative_section_pos + Simd::splat(16.0),
-                );
+    let lower_bound_mask = Simd::splat(!0) << lower_bound_shifts;
+    let upper_bound_mask = !(Simd::splat(!0) << upper_bound_shifts);
 
-                let closest_in_chunk = f32x3::splat(0.0)
-                    .simd_max(relative_bounds.min)
-                    .simd_min(relative_bounds.max);
-
-                let distances_squared = closest_in_chunk * closest_in_chunk;
-
-                let inside_fog = (distances_squared[X] + distances_squared[Z])
-                    < (fog_distance * fog_distance)
-                    && closest_in_chunk[Y].abs() < fog_distance;
-
-                modify_bit(&mut visible_sections, section_index, inside_fog);
-            }
-        }
-    }
-
-    visible_sections
+    (
+        lower_bound_ceil_clamped,
+        upper_bound_floor,
+        lower_bound_mask,
+        upper_bound_mask,
+    )
 }
 
 #[derive(Debug)]

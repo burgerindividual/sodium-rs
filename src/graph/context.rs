@@ -1,4 +1,4 @@
-use std::{array, i16};
+use std::array;
 
 use core_simd::simd::prelude::*;
 use std_float::StdFloat;
@@ -218,7 +218,6 @@ impl GraphSearchContext {
         *visible_sections &= tile::voxelize_fog_cylinder(relative_tile_pos, self.fog_distance);
     }
 
-    // TODO OPT: add douira's magic visible directions culler
     // TODO OPT: add ray culling
 }
 
@@ -241,10 +240,13 @@ impl LocalFrustum {
             Simd::from_array(planes.map(|plane| plane[component_idx]))
         });
         let plane_bb_offsets = planes.map(|plane| {
-            plane.resize(Default::default()).is_sign_negative().select(
-                Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-            )
+            plane
+                .resize(Default::default())
+                .is_sign_negative_fast()
+                .select(
+                    Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                    Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                )
         });
         let planes_scaled = planes.map(|plane| {
             let nonzero_plane_divisor = if plane[X] == 0.0 {
@@ -273,13 +275,12 @@ impl LocalFrustum {
     // TODO OPT: get rid of W by normalizing plane_xs, ys, zs.
     //  potentially can exclude near and far plane
     pub fn test_box(&self, bb: RelativeBoundingBox, results: &mut CombinedTestResults) {
-        // These mask shenanigans just check if the sign bit is set for each lane.
         // This is faster than doing a float comparison because we can ignore special
         // float values like infinity, and because we can hint to the compiler to use
         // vblendvps on x86.
-        let is_neg_x = self.planes_cw[X].is_sign_negative();
-        let is_neg_y = self.planes_cw[Y].is_sign_negative();
-        let is_neg_z = self.planes_cw[Z].is_sign_negative();
+        let is_neg_x = self.planes_cw[X].is_sign_negative_fast();
+        let is_neg_y = self.planes_cw[Y].is_sign_negative_fast();
+        let is_neg_z = self.planes_cw[Z].is_sign_negative_fast();
 
         let bb_min_x = Simd::splat(bb.min[X]);
         let bb_max_x = Simd::splat(bb.max[X]);
@@ -298,7 +299,6 @@ impl LocalFrustum {
             self.planes_cw[Y].mul_add_fast(outside_bounds_y, self.planes_cw[Z] * outside_bounds_z),
         );
 
-        // TODO: double check the stuff here
         // if any outside lengths are less than -w, return OUTSIDE
         // if all inside lengths are greater than -w, return INSIDE
         // otherwise, return PARTIAL
@@ -307,10 +307,10 @@ impl LocalFrustum {
 
         // the resize is necessary here because it allows LLVM to generate a vptest on
         // x86
-        let any_outside = ((outside_length_sq + self.planes_cw[W]).to_bits()
-            & Simd::splat(F32_SIGN_BIT))
-        .resize(0)
-            != u32x8::splat(0);
+        let any_outside = (outside_length_sq + self.planes_cw[W])
+            .is_sign_negative_fast()
+            .resize::<8>(false)
+            .any();
 
         if any_outside {
             // early exit
@@ -328,7 +328,7 @@ impl LocalFrustum {
         );
 
         let intersecting_planes = ((inside_length_sq + self.planes_cw[W])
-            .is_sign_negative()
+            .is_sign_negative_fast()
             .to_bitmask()
             & 0b111111) as u8;
 

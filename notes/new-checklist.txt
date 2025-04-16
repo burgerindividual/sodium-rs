@@ -2,6 +2,7 @@
 [x] Add fog culling
     - use vector sqrt for circle rasterization
     - mirror sqrt value to get both positions
+[ ] Deal with worlds that don't have a height that aligns to a tile
 [ ] Fix being above or below world height
     - how do we handle iteration?
     - this could probably be done by doing something like this: in get_incoming_edge, if neighbor is above world height,
@@ -9,3 +10,6 @@
     - what do we do about the starting tile with this?
 [ ] Replicate what addNearbySections does
 [ ] Fix frustum rasterization sometimes being weird
+[ ] Get rid of morton indexing, allow Y to be a non-po2 to save memory
+  - Maybe make all axis non-po2? Is it worth the perf hit?
+[ ] Change direction iteration order to make access patterns more linear

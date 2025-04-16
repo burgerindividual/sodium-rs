@@ -95,7 +95,7 @@ I am not deleting these because I'd like to archive the thought process behind h
 
 [x] Frustum voxelization
 
-[ ] Fog cylinder voxelization
+[x] Fog cylinder voxelization
 
 [ ] Run frustum test on children who don't need to be traversed
     - Use a different algorithm to determine whether early checks should be run, likely during section set.
@@ -148,7 +148,7 @@ LATER:
     - option 1: have lists for different direction combinations, add children to these lists and iterate
     - option 2: have const generic "guaranteed directions" and runtime "possible directions"
 
-[ ] Douira's special culling
+[x] Douira's special culling
 
 [ ] Ray culling
 

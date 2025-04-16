@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use core_simd::simd::prelude::*;
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
+use std_float::StdFloat;
 
 use crate::bitset::BitSet;
-use crate::graph::context::LocalFrustum;
+use crate::graph::context::{LocalFrustum, RelativeBoundingBox};
 use crate::graph::coords::{GraphCoordSpace, LocalTileCoords, LocalTileIndex};
 use crate::graph::direction::*;
 use crate::graph::tile::*;
@@ -370,8 +371,6 @@ fn step_test() {
 // TODO: automate this
 #[test]
 fn frustum_voxelization_test() {
-    // let relative_tile_pos = Simd::from_xyz(-552.477356, -55.7096558,
-    // 59.6260223);
     let relative_tile_pos = Simd::from_xyz(-168.475, -183.705, -63.434998);
 
     let frustum = LocalFrustum::new([
@@ -462,6 +461,38 @@ fn angle_visibility_masks_test() {
     }
 }
 
+fn gen_angle_visibility_masks_slow(relative_tile_pos: f32x3) -> [u8x64; 3] {
+    let mut x_mask = SECTIONS_FILLED;
+    let mut y_mask = SECTIONS_FILLED;
+    let mut z_mask = SECTIONS_FILLED;
+
+    for y in 0..8_u8 {
+        for z in 0..8_u8 {
+            for x in 0..8_u8 {
+                let section_coords = Simd::from_xyz(x, y, z);
+                let section_index = section_index(section_coords);
+                let relative_section_center = relative_tile_pos
+                    + Simd::splat(8.0)
+                    + (section_coords.cast::<f32>() * Simd::splat(16.0));
+
+                let distances = relative_section_center.abs();
+
+                if distances[X] > distances[Y] || distances[Z] > distances[Y] {
+                    clear_bit(&mut y_mask, section_index)
+                }
+                if distances[X] > distances[Z] || distances[Y] > distances[Z] {
+                    clear_bit(&mut z_mask, section_index)
+                }
+                if distances[Y] > distances[X] || distances[Z] > distances[X] {
+                    clear_bit(&mut x_mask, section_index)
+                }
+            }
+        }
+    }
+
+    [x_mask, y_mask, z_mask]
+}
+
 #[test]
 fn fog_voxelization_test() {
     const ITERATIONS: u32 = 10000;
@@ -472,11 +503,11 @@ fn fog_voxelization_test() {
             // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
             // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
             // (rand.random_range(-20_i8..20_i8) as f32) * 16.0,
-            rand.random_range(-300.0_f32..300.0_f32),
-            rand.random_range(-300.0_f32..300.0_f32),
-            rand.random_range(-300.0_f32..300.0_f32),
+            rand.random_range(-3000.0_f32..3000.0_f32),
+            rand.random_range(-3000.0_f32..3000.0_f32),
+            rand.random_range(-3000.0_f32..3000.0_f32),
         );
-        let fog_distance = rand.random_range(1.0_f32..300.0_f32);
+        let fog_distance = rand.random_range(0.0_f32..900.0_f32);
 
         let test_result = voxelize_fog_cylinder(relative_tile_pos, fog_distance);
         let sane_result = voxelize_fog_cylinder_slow(relative_tile_pos, fog_distance);
@@ -495,5 +526,61 @@ fn fog_voxelization_test() {
         }
     }
 }
+
+fn voxelize_fog_cylinder_slow(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {
+    let mut visible_sections = SECTIONS_EMPTY;
+
+    for y in 0..8 {
+        for z in 0..8 {
+            for x in 0..8 {
+                let section_coords = Simd::from_xyz(x, y, z);
+                let section_index = section_index(section_coords);
+
+                let relative_section_pos = section_coords
+                    .cast::<f32>()
+                    .mul_add_fast(Simd::splat(16.0), relative_tile_pos);
+                let relative_bounds = RelativeBoundingBox::new(
+                    relative_section_pos,
+                    relative_section_pos + Simd::splat(16.0),
+                );
+
+                let closest_in_chunk = f32x3::splat(0.0)
+                    .simd_max(relative_bounds.min)
+                    .simd_min(relative_bounds.max);
+
+                let distances_squared = closest_in_chunk * closest_in_chunk;
+
+                let inside_fog = (distances_squared[X] + distances_squared[Z])
+                    < (fog_distance * fog_distance)
+                    && closest_in_chunk[Y].abs() < fog_distance;
+
+                modify_bit(&mut visible_sections, section_index, inside_fog);
+            }
+        }
+    }
+
+    visible_sections
+}
+
+#[test]
+fn mod_test() {
+    for x in i8::MIN..=i8::MAX {
+        for y in 2..i8::MAX {
+            let sane_mod = x.rem_euclid(y);
+            let test_mod = modulo(i8x4::splat(x), i8x4::splat(y))[0];
+            assert_eq!(sane_mod, test_mod);
+        }
+    }
+}
+
+fn modulo(x: i8x4, y: i8x4) -> i8x4 {
+    let xf = x.cast::<f32>();
+    let yf = y.cast::<f32>();
+    let div = xf / yf;
+    let floor = div.floor();
+    let rem = xf - (floor * yf);
+    unsafe { rem.to_int_unchecked::<i8>() }
+}
+
 
 // TODO: test bfs

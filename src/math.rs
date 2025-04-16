@@ -105,6 +105,7 @@ impl MulAddFast for f64 {
 
 pub trait SignFast: SimdFloat {
     fn is_sign_positive_fast(self) -> Self::Mask;
+    fn is_sign_negative_fast(self) -> Self::Mask;
 }
 
 impl<const LANES: usize> SignFast for Simd<f32, LANES>
@@ -112,6 +113,11 @@ where
     LaneCount<LANES>: SupportedLaneCount,
 {
     fn is_sign_positive_fast(self) -> Self::Mask {
-        self.to_bits().simd_lt(Simd::splat(F32_SIGN_BIT))
+        // self.to_bits().simd_lt(Simd::splat(F32_SIGN_BIT))
+        (self.to_bits() & Simd::splat(F32_SIGN_BIT)).simd_eq(Simd::splat(0))
+    }
+
+    fn is_sign_negative_fast(self) -> Self::Mask {
+        (self.to_bits() & Simd::splat(F32_SIGN_BIT)).simd_eq(Simd::splat(F32_SIGN_BIT))
     }
 }
