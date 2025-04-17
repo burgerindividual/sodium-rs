@@ -1,4 +1,3 @@
-use std::mem::MaybeUninit;
 use std::ops::Index;
 
 use core_simd::simd::prelude::*;
@@ -7,147 +6,76 @@ use super::{direction, i16x3, i32x3, i8x3, u16x3, u8x3, Coords3};
 use crate::math::*;
 
 pub struct GraphCoordSpace {
-    morton_swizzle_pattern: u8x16,
-    morton_bitmasks: u8x16,
-
-    tile_bitmask: i8x3,
-    block_bitmask: u16x3,
+    axis_lengths_in_tiles: u8x3,
+    axis_lengths_in_tiles_extended: u16x3,
+    modulo_magics: u16x3,
+    index_axis_scales: u16x3,
 
     pub world_bottom_section_y: i8,
     pub world_top_section_y: i8,
 }
 
 impl GraphCoordSpace {
+    /**
+     * The lengths provided must be greater than or equal to 2, and less
+     * than or equal to 128. The lengths multiplied together must be
+     * less than or equal to 65536
+     */
     pub fn new(
-        mut x_bits: u8,
-        mut y_bits: u8,
-        mut z_bits: u8,
+        x_length_tiles: u8,
+        y_length_tiles: u8,
+        z_length_tiles: u8,
         world_bottom_section_y: i8,
         world_top_section_y: i8,
     ) -> Self {
-        assert!(
-            (x_bits + y_bits + z_bits) < 16,
-            "Total index bits exceeds 16. X: {x_bits}, Y: {y_bits}, Z: {z_bits}"
-        );
-
-        // NOTE: extra bits need to be present in the LocalTileCoords, but not in the
-        // LocalTileIndex, as long as we're not doing any unpacking.
-        let bit_counts = u8x3::from_xyz(x_bits, y_bits, z_bits);
-
-        let mut coord_space = Self {
-            // setting the top bit to 1 results in 0 being placed in a dynamic shuffle
-            morton_swizzle_pattern: Simd::splat(0b10000000),
-            morton_bitmasks: Simd::splat(!0),
-            block_bitmask: (Simd::splat(0b1) << (bit_counts.cast::<u16>() + Simd::splat(7)))
-                - Simd::splat(1),
-            tile_bitmask: (Simd::splat(0b1) << bit_counts.cast::<i8>()) - Simd::splat(1),
+        let axis_lengths_in_tiles = u8x3::from_xyz(x_length_tiles, y_length_tiles, z_length_tiles);
+        Self {
+            axis_lengths_in_tiles,
+            axis_lengths_in_tiles_extended: axis_lengths_in_tiles.cast(),
+            modulo_magics: u16x3::from_xyz(
+                Self::compute_magic(x_length_tiles),
+                Self::compute_magic(y_length_tiles),
+                Self::compute_magic(z_length_tiles),
+            ),
+            index_axis_scales: u16x3::from_xyz(
+                1,
+                x_length_tiles as u16 * z_length_tiles as u16,
+                x_length_tiles as u16,
+            ),
             world_bottom_section_y,
             world_top_section_y,
-        };
-
-        let mut idx: usize = 0;
-        let mut cur_x_bit: u8 = 0;
-        let mut cur_y_bit: u8 = 0;
-        let mut cur_z_bit: u8 = 0;
-
-        // bits roughly in 0b...XYZXYZ order
-
-        while z_bits != 0 || y_bits != 0 || x_bits != 0 {
-            if z_bits != 0 {
-                // choose the first or second u8 of the u16 to sample
-                coord_space.morton_swizzle_pattern[idx] = Z as u8;
-                coord_space.morton_bitmasks[idx] = 1 << cur_z_bit;
-                idx += 1;
-                cur_z_bit += 1;
-                z_bits -= 1;
-            }
-
-            if y_bits != 0 {
-                coord_space.morton_swizzle_pattern[idx] = Y as u8;
-                coord_space.morton_bitmasks[idx] = 1 << cur_y_bit;
-                idx += 1;
-                cur_y_bit += 1;
-                y_bits -= 1;
-            }
-
-            if x_bits != 0 {
-                coord_space.morton_swizzle_pattern[idx] = X as u8;
-                coord_space.morton_bitmasks[idx] = 1 << cur_x_bit;
-                idx += 1;
-                cur_x_bit += 1;
-                x_bits -= 1;
-            }
         }
+    }
 
-        // let mut idx: usize = 0;
-
-        // for cur_z_bit in 0..z_bits {
-        //     coord_space.morton_swizzle_pattern[idx] = Z as u8;
-        //     coord_space.morton_bitmasks[idx] = 1 << cur_z_bit;
-        //     idx += 1;
-        // }
-
-        // for cur_y_bit in 0..y_bits {
-        //     coord_space.morton_swizzle_pattern[idx] = Y as u8;
-        //     coord_space.morton_bitmasks[idx] = 1 << cur_y_bit;
-        //     idx += 1;
-        // }
-
-        // for cur_x_bit in 0..x_bits {
-        //     coord_space.morton_swizzle_pattern[idx] = X as u8;
-        //     coord_space.morton_bitmasks[idx] = 1 << cur_x_bit;
-        //     idx += 1;
-        // }
-
-        coord_space
+    fn compute_magic(denom: u8) -> u16 {
+        let base = (u16::MAX / (denom as u16)).wrapping_add(1);
+        let po2_modifier = if denom & (denom - 1) == 0 { 1 } else { 0 };
+        base + po2_modifier
     }
 
     pub fn pack_index(&self, coords: LocalTileCoords) -> LocalTileIndex {
-        // this produces the best codegen, and should always be safe due to how we
-        // populate morton_swizzle_pattern
-        #[allow(invalid_value)] // yeah, we know
-        let broadcasted_coords: i8x16 = coords
-            .0
-            .resize(unsafe { MaybeUninit::uninit().assume_init() });
-
-        #[cfg(target_feature = "ssse3")]
-        let packed_morton_bits = unsafe {
-            use std::arch::x86_64::*;
-            let expanded_bytes = _mm_shuffle_epi8(
-                broadcasted_coords.into(),
-                self.morton_swizzle_pattern.into(),
-            );
-            let morton_bitmasks = self.morton_bitmasks.into();
-            let expanded_morton_bits = _mm_and_si128(expanded_bytes, morton_bitmasks);
-            _mm_movemask_epi8(_mm_cmpeq_epi8(expanded_morton_bits, morton_bitmasks)) as u16
-        };
-
-        #[cfg(not(target_feature = "ssse3"))]
-        let packed_morton_bits = {
-            // allocate one byte per bit for each element. each element is still has its
-            // individual bits in linear ordering, but the bytes in the vector
-            // are in morton ordering.
-            let expanded_bytes = broadcasted_coords
-                .cast::<u8>()
-                .swizzle_dyn(self.morton_swizzle_pattern);
-
-            // isolate each bit necessary for morton ordering
-            let expanded_morton_bits = expanded_bytes & self.morton_bitmasks;
-
-            // check if masked bit is set (== lane mask) or unset (== 0) for each lane, then
-            // pack each lane into one bit.
-            expanded_morton_bits
-                .simd_eq(self.morton_bitmasks)
-                .to_bitmask() as u16
-        };
-
-        LocalTileIndex(packed_morton_bits)
+        let coords_extended = coords.0.cast::<i16>();
+        // add -1 if negative
+        let coords_shifted = coords_extended - (coords_extended >> 15);
+        let low_bits = coords_shifted.cast::<u16>() * self.modulo_magics;
+        let high_bits =
+            ((low_bits.cast::<u32>() * self.axis_lengths_in_tiles_extended.cast::<u32>()) >> 16)
+                .cast::<u16>();
+        let wrapped = coords_extended.simd_eq(Simd::splat(-1)).select(
+            self.axis_lengths_in_tiles_extended - Simd::splat(1),
+            high_bits,
+        );
+        LocalTileIndex((wrapped * self.index_axis_scales).reduce_sum())
     }
 
     pub fn section_to_tile_coords(&self, section_coords: i32x3) -> (LocalTileCoords, u8x3) {
         let shifted_coords =
             section_coords - i32x3::from_xyz(0, self.world_bottom_section_y as i32, 0);
-        let tile_coords = LocalTileCoords((shifted_coords >> 3).cast::<i8>() & self.tile_bitmask);
+        let tile_coords = LocalTileCoords(
+            (shifted_coords >> 3)
+                .rem_euclid(self.axis_lengths_in_tiles.cast())
+                .cast::<i8>(),
+        );
         let section_coords_in_tile = shifted_coords.cast::<u8>() & Simd::splat(0b111);
         (tile_coords, section_coords_in_tile)
     }
@@ -155,7 +83,9 @@ impl GraphCoordSpace {
     pub fn block_to_local_coords(&self, block_coords: i32x3) -> u16x3 {
         let world_bottom_block_y = (self.world_bottom_section_y as i32) << 4;
         let shifted_coords = block_coords - i32x3::from_xyz(0, world_bottom_block_y, 0);
-        shifted_coords.cast::<u16>() & self.block_bitmask
+        shifted_coords
+            .rem_euclid(self.axis_lengths_in_tiles.cast() << 7)
+            .cast::<u16>()
     }
 }
 

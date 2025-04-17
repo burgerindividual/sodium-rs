@@ -41,29 +41,37 @@ pub struct Graph {
 
 impl Graph {
     pub fn new(render_distance: u8, world_bottom_section_y: i8, world_top_section_y: i8) -> Self {
-        let world_y_len_sections =
+        // Same as Minecraft's ClientChunkCache.calculateStorageRange
+        let storage_distance = render_distance.max(2) + 3;
+        let y_length_sections =
             (world_top_section_y as i16 - world_bottom_section_y as i16 + 1) as u16;
-        let world_xz_len_sections = (render_distance as u16 * 2) + 1;
+        let xz_length_sections = (storage_distance as u16 * 2) + 1;
 
-        assert!(world_y_len_sections > 0 && world_xz_len_sections > 0,
+        assert!(y_length_sections > 0 && xz_length_sections > 0,
             "Invalid graph size. RD: {render_distance}, Bottom Section: {world_bottom_section_y}, Top Section: {world_top_section_y}"
         );
 
-        // the minimum size of the graph is 2x2x2 so we can guarantee that each tile
-        // will only be processed once. if any axis had a length of 1, when the graph
-        // search wraps past the edge of the graph, we would land on the same tile that
-        // was just processed.
-        let graph_y_bits =
-            (u16::BITS as u8 - (world_y_len_sections - 1).leading_zeros() as u8).max(5) - 3;
-        let graph_xz_bits =
-            (u16::BITS as u8 - (world_xz_len_sections - 1).leading_zeros() as u8).max(5) - 3;
+        // the minimum size of the graph is 2x2x2 tiles, so we can guarantee that each
+        // tile will only be processed once. if any axis were allowed to have a
+        // size of 1, when the graph search wraps past the edge of the graph, we
+        // would land on the same tile that was just processed.
+        let y_length_tiles = (y_length_sections.next_multiple_of(8) >> 3).max(2);
+        let xz_length_tiles = (xz_length_sections.next_multiple_of(8) >> 3).max(2);
 
-        let graph_y_len_tiles = 1_usize << graph_y_bits;
-        let graph_xz_len_tiles = 1_usize << graph_xz_bits;
+        let graph_total_tiles = y_length_tiles as usize * (xz_length_tiles as usize).pow(2);
+
+        // Make sure graph bounds can be represented with i8 coordinates, and u16
+        // indices.
+        // TODO: should max axis length be smaller to prevent wrapping on step?
+        const MAX_AXIS_LENGTH: u16 = i8::MAX as u16 + 1;
+        const MAX_TOTAL_TILES: usize = u16::MAX as usize + 1;
+        assert!(
+            y_length_tiles <= MAX_AXIS_LENGTH && xz_length_tiles <= MAX_AXIS_LENGTH && graph_total_tiles <= MAX_TOTAL_TILES,
+            "Graph size is too large. Y Length (tiles): {y_length_tiles}, XZ Length (tiles): {xz_length_tiles}"
+        );
 
         let tiles = unsafe {
-            let mut tiles_uninit =
-                Box::<[Tile]>::new_uninit_slice(graph_y_len_tiles * graph_xz_len_tiles.pow(2));
+            let mut tiles_uninit = Box::<[Tile]>::new_uninit_slice(graph_total_tiles);
 
             for tile_uninit in tiles_uninit.iter_mut() {
                 tile_uninit.write(Default::default());
@@ -72,14 +80,14 @@ impl Graph {
             tiles_uninit.assume_init()
         };
 
-        let do_height_checks = world_y_len_sections & 0b111 != 0;
+        let do_height_checks = y_length_sections % LocalTileCoords::LENGTH_IN_SECTIONS as u16 != 0;
 
         Self {
             tiles,
             coord_space: GraphCoordSpace::new(
-                graph_xz_bits,
-                graph_y_bits,
-                graph_xz_bits,
+                xz_length_tiles as u8,
+                y_length_tiles as u8,
+                xz_length_tiles as u8,
                 world_bottom_section_y,
                 world_top_section_y,
             ),

@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use core_simd::simd::prelude::*;
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
-use std_float::StdFloat;
 
 use crate::bitset::BitSet;
 use crate::graph::context::{LocalFrustum, RelativeBoundingBox};
@@ -19,28 +18,35 @@ const RANDOM_SEED: u64 = 0x0c41ce821df0e3a9;
 
 #[test]
 fn pack_index_test() {
-    let graph_y_bits = 2;
-    let graph_xz_bits = 3;
+    let storage_distance = 20;
+    let y_length_sections = 24_u16;
+    let xz_length_sections = (storage_distance as u16 * 2) + 1;
 
-    let graph_y_len_tiles = 1_i8 << graph_y_bits;
-    let graph_xz_len_tiles = 1_i8 << graph_xz_bits;
+    let y_length_tiles = (y_length_sections.next_multiple_of(8) >> 3).max(2);
+    let xz_length_tiles = (xz_length_sections.next_multiple_of(8) >> 3).max(2);
 
-    let index_max = (graph_xz_len_tiles as u16).pow(2) * (graph_y_len_tiles as u16);
+    let graph_total_tiles = y_length_tiles as u32 * (xz_length_tiles as u32).pow(2);
 
-    let coord_space = GraphCoordSpace::new(graph_xz_bits, graph_y_bits, graph_xz_bits, -4, 19);
+    let coord_space = GraphCoordSpace::new(
+        xz_length_tiles as u8,
+        y_length_tiles as u8,
+        xz_length_tiles as u8,
+        -4,
+        19,
+    );
     let mut index_coords_map = HashMap::<LocalTileIndex, LocalTileCoords>::new();
 
-    for x in 0..graph_xz_len_tiles {
-        for y in 0..graph_y_len_tiles {
-            for z in 0..graph_xz_len_tiles {
-                let coords = LocalTileCoords::from_xyz(x, y, z);
+    for y in 0..y_length_tiles {
+        for z in 0..xz_length_tiles {
+            for x in 0..xz_length_tiles {
+                let coords = LocalTileCoords::from_xyz(x as i8, y as i8, z as i8);
                 let index = coord_space.pack_index(coords);
 
                 assert!(
-                    index.0 < index_max,
+                    (index.0 as u32) < graph_total_tiles,
                     "Index too large. Index: {:#018b}, Max: {:#018b}",
                     index.0,
-                    index_max
+                    graph_total_tiles
                 );
 
                 let entry = index_coords_map.get(&index);
@@ -54,6 +60,18 @@ fn pack_index_test() {
                 }
             }
         }
+    }
+
+    // test a stray out of bounds index to see if it's handled
+    {
+        let coords = LocalTileCoords::from_xyz(-1, -1, -1);
+        let index = coord_space.pack_index(coords);
+        assert!(
+            (index.0 as u32) < graph_total_tiles,
+            "Index too large. Index: {:#018b}, Max: {:#018b}",
+            index.0,
+            graph_total_tiles
+        );
     }
 
     // test wrapping on edges
@@ -562,25 +580,15 @@ fn voxelize_fog_cylinder_slow(relative_tile_pos: f32x3, fog_distance: f32) -> u8
     visible_sections
 }
 
-#[test]
-fn mod_test() {
-    for x in i8::MIN..=i8::MAX {
-        for y in 2..i8::MAX {
-            let sane_mod = x.rem_euclid(y);
-            let test_mod = modulo(i8x4::splat(x), i8x4::splat(y))[0];
-            assert_eq!(sane_mod, test_mod);
-        }
-    }
-}
-
-fn modulo(x: i8x4, y: i8x4) -> i8x4 {
-    let xf = x.cast::<f32>();
-    let yf = y.cast::<f32>();
-    let div = xf / yf;
-    let floor = div.floor();
-    let rem = xf - (floor * yf);
-    unsafe { rem.to_int_unchecked::<i8>() }
-}
-
+// #[test]
+// fn test_modulo() {
+//     for denom in (19995..=20000).rev() {
+//         for i in -30_000_000_i32..=30_000_000_i32 {
+//             let sane = i.rem_euclid(denom);
+//             let test = i32x1::splat(i).modulo(i32x1::splat(denom))[0];
+//             assert_eq!(sane, test);
+//         }
+//     }
+// }
 
 // TODO: test bfs

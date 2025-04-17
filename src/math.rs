@@ -121,3 +121,21 @@ where
         (self.to_bits() & Simd::splat(F32_SIGN_BIT)).simd_eq(Simd::splat(F32_SIGN_BIT))
     }
 }
+
+pub trait RemEuclid {
+    fn rem_euclid(self, rhs: Self) -> Self;
+}
+
+impl<const LANES: usize> RemEuclid for Simd<i32, LANES>
+where
+    LaneCount<LANES>: SupportedLaneCount,
+{
+    fn rem_euclid(self, rhs: Self) -> Self {
+        let lhs_f = self.cast::<f64>();
+        let rhs_f = rhs.cast::<f64>();
+        let div = lhs_f / rhs_f;
+        let floor = div.floor();
+        let mod_f = lhs_f - (floor * rhs_f);
+        unsafe { mod_f.to_int_unchecked() }
+    }
+}
