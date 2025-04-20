@@ -1,5 +1,3 @@
-use std::slice;
-
 use context::{CombinedTestResults, GraphSearchContext};
 use coords::{GraphCoordSpace, LocalTileIndex};
 use core_simd::simd::prelude::*;
@@ -24,12 +22,10 @@ macro_rules! iterate_dirs {
         const INCOMING_DIRS: u8 = opposite(bitset::from_u8_slice(DIRS_SLICE));
         const TRAVERSAL_DIRS: u8 = all_except(INCOMING_DIRS);
 
-        let mut iter = DIRS_SLICE.iter();
-
         $graph.iterate_dirs(
             $context,
             $context.camera_tile_coords,
-            &mut iter,
+            DIRS_SLICE,
             Self::process_tile::<INCOMING_DIRS, TRAVERSAL_DIRS>,
         );
     }};
@@ -159,16 +155,16 @@ impl Graph {
         iterate_dirs!(self, context, POS_X, NEG_Z, NEG_Y);
     }
 
-    /// iter must not be empty when calling this
+    /// dirs must not be empty when calling this
     fn iterate_dirs(
         &mut self,
         context: &GraphSearchContext,
         start_coords: LocalTileCoords,
-        iter: &mut slice::Iter<'_, u8>,
+        dirs: &[u8],
         process_tile_fn: fn(&mut Self, &GraphSearchContext, LocalTileIndex, LocalTileCoords),
     ) {
-        let direction = unsafe { *iter.next().unwrap_unchecked() };
-        let iter_empty = iter.len() == 0;
+        let last_direction = dirs.len() == 1;
+        let direction = dirs[0];
         let steps = context.direction_step_counts[to_index(direction)];
         let mut coords = start_coords;
 
@@ -177,12 +173,12 @@ impl Graph {
 
             // if the direction set is empty, we should stop recursing, and start processing
             // tiles
-            if iter_empty {
+            if last_direction {
                 let index = self.coord_space.pack_index(coords);
 
                 process_tile_fn(self, context, index, coords);
             } else {
-                self.iterate_dirs(context, coords, iter, process_tile_fn);
+                self.iterate_dirs(context, coords, &dirs[1..], process_tile_fn);
             }
         }
     }
