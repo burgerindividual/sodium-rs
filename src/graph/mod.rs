@@ -1,3 +1,5 @@
+use std::slice;
+
 use context::{CombinedTestResults, GraphSearchContext};
 use coords::{GraphCoordSpace, LocalTileIndex};
 use core_simd::simd::prelude::*;
@@ -17,14 +19,17 @@ pub mod tile;
 pub mod visibility;
 
 macro_rules! iterate_dirs {
-    ($graph:ident, $context:ident, $iter_dirs:expr) => {{
-        const INCOMING_DIRS: u8 = opposite($iter_dirs);
+    ($graph:ident, $context:ident, $($dir:expr),+) => {{
+        const DIRS_SLICE: &[u8] = &[$($dir),+];
+        const INCOMING_DIRS: u8 = opposite(bitset::from_u8_slice(DIRS_SLICE));
         const TRAVERSAL_DIRS: u8 = all_except(INCOMING_DIRS);
+
+        let mut iter = DIRS_SLICE.iter();
 
         $graph.iterate_dirs(
             $context,
             $context.camera_tile_coords,
-            $iter_dirs,
+            &mut iter,
             Self::process_tile::<INCOMING_DIRS, TRAVERSAL_DIRS>,
         );
     }};
@@ -121,47 +126,49 @@ impl Graph {
 
         // Axes
         iterate_dirs!(self, context, POS_X);
-        iterate_dirs!(self, context, POS_Y);
-        iterate_dirs!(self, context, POS_Z);
         iterate_dirs!(self, context, NEG_X);
-        iterate_dirs!(self, context, NEG_Y);
+        iterate_dirs!(self, context, POS_Z);
         iterate_dirs!(self, context, NEG_Z);
+        iterate_dirs!(self, context, POS_Y);
+        iterate_dirs!(self, context, NEG_Y);
 
         // Planes
-        iterate_dirs!(self, context, POS_X | POS_Y);
-        iterate_dirs!(self, context, NEG_X | POS_Y);
-        iterate_dirs!(self, context, POS_X | NEG_Y);
-        iterate_dirs!(self, context, NEG_X | NEG_Y);
+        iterate_dirs!(self, context, POS_X, POS_Y);
+        iterate_dirs!(self, context, NEG_X, POS_Y);
+        iterate_dirs!(self, context, POS_X, NEG_Y);
+        iterate_dirs!(self, context, NEG_X, NEG_Y);
 
-        iterate_dirs!(self, context, POS_X | POS_Z);
-        iterate_dirs!(self, context, NEG_X | POS_Z);
-        iterate_dirs!(self, context, POS_X | NEG_Z);
-        iterate_dirs!(self, context, NEG_X | NEG_Z);
+        iterate_dirs!(self, context, POS_X, POS_Z);
+        iterate_dirs!(self, context, NEG_X, POS_Z);
+        iterate_dirs!(self, context, POS_X, NEG_Z);
+        iterate_dirs!(self, context, NEG_X, NEG_Z);
 
-        iterate_dirs!(self, context, POS_Y | POS_Z);
-        iterate_dirs!(self, context, NEG_Y | POS_Z);
-        iterate_dirs!(self, context, POS_Y | NEG_Z);
-        iterate_dirs!(self, context, NEG_Y | NEG_Z);
+        iterate_dirs!(self, context, POS_Z, POS_Y);
+        iterate_dirs!(self, context, POS_Z, NEG_Y);
+        iterate_dirs!(self, context, NEG_Z, POS_Y);
+        iterate_dirs!(self, context, NEG_Z, NEG_Y);
 
         // Octants
-        iterate_dirs!(self, context, POS_X | POS_Y | POS_Z);
-        iterate_dirs!(self, context, NEG_X | POS_Y | POS_Z);
-        iterate_dirs!(self, context, NEG_X | NEG_Y | POS_Z);
-        iterate_dirs!(self, context, POS_X | NEG_Y | POS_Z);
-        iterate_dirs!(self, context, POS_X | POS_Y | NEG_Z);
-        iterate_dirs!(self, context, NEG_X | POS_Y | NEG_Z);
-        iterate_dirs!(self, context, NEG_X | NEG_Y | NEG_Z);
-        iterate_dirs!(self, context, POS_X | NEG_Y | NEG_Z);
+        iterate_dirs!(self, context, POS_X, POS_Z, POS_Y);
+        iterate_dirs!(self, context, NEG_X, POS_Z, POS_Y);
+        iterate_dirs!(self, context, NEG_X, POS_Z, NEG_Y);
+        iterate_dirs!(self, context, POS_X, POS_Z, NEG_Y);
+        iterate_dirs!(self, context, POS_X, NEG_Z, POS_Y);
+        iterate_dirs!(self, context, NEG_X, NEG_Z, POS_Y);
+        iterate_dirs!(self, context, NEG_X, NEG_Z, NEG_Y);
+        iterate_dirs!(self, context, POS_X, NEG_Z, NEG_Y);
     }
 
+    /// iter must not be empty when calling this
     fn iterate_dirs(
         &mut self,
         context: &GraphSearchContext,
         start_coords: LocalTileCoords,
-        mut iter_directions: u8,
+        iter: &mut slice::Iter<'_, u8>,
         process_tile_fn: fn(&mut Self, &GraphSearchContext, LocalTileIndex, LocalTileCoords),
     ) {
-        let direction = take_one(&mut iter_directions);
+        let direction = unsafe { *iter.next().unwrap_unchecked() };
+        let iter_empty = iter.len() == 0;
         let steps = context.direction_step_counts[to_index(direction)];
         let mut coords = start_coords;
 
@@ -170,12 +177,12 @@ impl Graph {
 
             // if the direction set is empty, we should stop recursing, and start processing
             // tiles
-            if iter_directions != 0 {
-                self.iterate_dirs(context, coords, iter_directions, process_tile_fn);
-            } else {
+            if iter_empty {
                 let index = self.coord_space.pack_index(coords);
 
                 process_tile_fn(self, context, index, coords);
+            } else {
+                self.iterate_dirs(context, coords, iter, process_tile_fn);
             }
         }
     }

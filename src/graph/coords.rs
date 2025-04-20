@@ -16,11 +16,9 @@ pub struct GraphCoordSpace {
 }
 
 impl GraphCoordSpace {
-    /**
-     * The lengths provided must be greater than or equal to 2, and less
-     * than or equal to 128. The lengths multiplied together must be
-     * less than or equal to 65536
-     */
+    /// The lengths provided must be greater than or equal to 2, and less
+    /// than or equal to 128. The lengths multiplied together must be
+    /// less than or equal to 65536
     pub fn new(
         x_length_tiles: u8,
         y_length_tiles: u8,

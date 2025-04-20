@@ -1,6 +1,18 @@
 use std::hint::assert_unchecked;
 use std::ops::{BitAnd, BitOr, Not, Shl, Shr};
 
+pub const fn from_u8_slice(slice: &[u8]) -> u8 {
+    let mut combined = 0;
+
+    let mut i = 0;
+    while i < slice.len() {
+        combined |= slice[i];
+        i += 1;
+    }
+
+    combined
+}
+
 pub const fn contains_u8(bitset: u8, other_bitset: u8) -> bool {
     bitset & other_bitset == other_bitset
 }
