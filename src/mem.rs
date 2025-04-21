@@ -1,5 +1,6 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
+use std::sync::OnceLock;
 
 pub type AlignedAllocFn = unsafe extern "C" fn(alignment: usize, size: usize) -> *mut u8;
 pub type AlignedFreeFn = unsafe extern "C" fn(ptr: *mut u8);
@@ -8,13 +9,11 @@ pub type CallocFn = unsafe extern "C" fn(num_elements: usize, element_size: usiz
 
 #[cfg(not(test))]
 #[global_allocator]
-static mut GLOBAL_ALLOC: GlobalLibcAllocator = GlobalLibcAllocator::uninit();
+static GLOBAL_ALLOC: GlobalLibcAllocator = GlobalLibcAllocator::uninit();
 
 #[cfg(not(test))]
 pub fn set_allocator(vtable: LibcAllocVtable) {
-    unsafe {
-        GLOBAL_ALLOC = vtable.into();
-    }
+    GLOBAL_ALLOC.init(vtable);
 }
 
 #[cfg(test)]
@@ -23,6 +22,7 @@ pub fn set_allocator(_: LibcAllocVtable) {
     unreachable!();
 }
 
+#[derive(Debug)]
 pub struct LibcAllocVtable {
     pub aligned_alloc_fn_ptr: AlignedAllocFn,
     pub aligned_free_fn_ptr: AlignedFreeFn,
@@ -31,26 +31,28 @@ pub struct LibcAllocVtable {
 }
 
 pub struct GlobalLibcAllocator {
-    vtable: Option<LibcAllocVtable>,
+    pub vtable: OnceLock<LibcAllocVtable>,
 }
 
 impl GlobalLibcAllocator {
     pub const fn uninit() -> Self {
-        GlobalLibcAllocator { vtable: None }
+        GlobalLibcAllocator {
+            vtable: OnceLock::new(),
+        }
     }
 
     fn vtable(&self) -> &LibcAllocVtable {
         self.vtable
-            .as_ref()
+            .get()
             .expect("Allocator functions not initialized")
     }
 }
 
-impl From<LibcAllocVtable> for GlobalLibcAllocator {
-    fn from(value: LibcAllocVtable) -> Self {
-        GlobalLibcAllocator {
-            vtable: Some(value),
-        }
+impl GlobalLibcAllocator {
+    pub fn init(&self, value: LibcAllocVtable) {
+        self.vtable
+            .set(value)
+            .expect("Allocator functions already initialized");
     }
 }
 

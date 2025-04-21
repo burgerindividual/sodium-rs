@@ -396,6 +396,7 @@ pub fn gen_outward_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRE
     ]
 }
 
+#[inline(never)]
 pub fn gen_angle_visibility_masks(relative_tile_pos: f32x3) -> [u8x64; 3] {
     let offsets = relative_tile_pos.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
 
@@ -421,8 +422,6 @@ pub fn gen_angle_visibility_masks(relative_tile_pos: f32x3) -> [u8x64; 3] {
     [x_mask, y_mask, z_mask]
 }
 
-// This *really* doesn't like being inlined for some reason
-#[inline(never)]
 pub fn gen_compressed_angle_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8x8) {
     let neg_x_offset = Simd::splat(-offset_1);
     let y_offset = Simd::splat(offset_2);
@@ -453,32 +452,65 @@ pub fn gen_compressed_angle_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8
     (combined_mask.cast::<u8>(), reverse_mask.cast::<u8>())
 }
 
+#[rustfmt::skip]
 pub fn expand_xy_angle_mask(compressed_mask: u8x8) -> u8x64 {
     simd_swizzle!(
         compressed_mask,
         [
-            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3,
-            3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7,
-            7, 7, 7, 7, 7, 7,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            1, 1, 1, 1, 1, 1, 1, 1,
+            2, 2, 2, 2, 2, 2, 2, 2,
+            3, 3, 3, 3, 3, 3, 3, 3,
+            4, 4, 4, 4, 4, 4, 4, 4,
+            5, 5, 5, 5, 5, 5, 5, 5,
+            6, 6, 6, 6, 6, 6, 6, 6,
+            7, 7, 7, 7, 7, 7, 7, 7,
         ]
     )
 }
 
+#[rustfmt::skip]
 pub fn expand_xz_angle_mask(compressed_mask: u8x8) -> u8x64 {
     simd_swizzle!(
         compressed_mask,
         [
-            0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4,
-            5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1,
-            2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7,
         ]
     )
 }
 
+#[rustfmt::skip]
 pub fn expand_zy_angle_mask(compressed_mask: u8x8) -> u8x64 {
-    mask8x64::from_bitmask(u64::from_ne_bytes(compressed_mask.to_array()))
-        .to_int()
-        .to_ne_bytes()
+    const MASK: u8x64 = Simd::from_array([
+        0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
+        0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
+        0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
+        0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
+        0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
+        0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
+        0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
+        0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
+    ]);
+    (simd_swizzle!(
+        compressed_mask,
+        [
+            0, 0, 0, 0, 0, 0, 0, 0,
+            1, 1, 1, 1, 1, 1, 1, 1,
+            2, 2, 2, 2, 2, 2, 2, 2,
+            3, 3, 3, 3, 3, 3, 3, 3,
+            4, 4, 4, 4, 4, 4, 4, 4,
+            5, 5, 5, 5, 5, 5, 5, 5,
+            6, 6, 6, 6, 6, 6, 6, 6,
+            7, 7, 7, 7, 7, 7, 7, 7,
+        ]
+    ) & MASK).simd_eq(MASK).to_int().cast()
 }
 
 pub fn voxelize_fog_cylinder(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {

@@ -156,6 +156,7 @@ impl Graph {
     }
 
     /// dirs must not be empty when calling this
+    #[inline(never)]
     fn iterate_dirs(
         &mut self,
         context: &GraphSearchContext,
@@ -183,6 +184,8 @@ impl Graph {
         }
     }
 
+    // the inlining of this function was a bit too aggressive
+    #[inline(never)]
     fn process_tile<const INCOMING_DIRS: u8, const TRAVERSAL_DIRS: u8>(
         &mut self,
         context: &GraphSearchContext,
@@ -272,10 +275,9 @@ impl Graph {
             // traversed in this tile. because of this, we know atleast part of
             // it is visible.
 
-            let tile = self.get_tile_mut(index);
-
             let angle_visibility_masks = tile::gen_angle_visibility_masks(relative_tile_pos);
 
+            let tile = self.get_tile_mut(index);
             tile.traverse::<TRAVERSAL_DIRS>(
                 traverse_start_sections,
                 incoming_dir_section_sets,
