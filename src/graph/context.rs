@@ -146,21 +146,20 @@ impl GraphSearchContext {
         coords: LocalTileCoords,
         results: &mut CombinedTestResults,
     ) {
-        let tile_min_y = coords[Y];
-        let tile_max_y = tile_min_y + LocalTileCoords::LENGTH_IN_SECTIONS as i8 - 1;
-        let world_max_y = coord_space.world_top_section_y;
+        let tile_y = coords[Y];
+        let world_max_y = (coord_space.axis_lengths_in_tiles[Y] - 1) as i8;
 
-        let min_out_of_bounds = tile_min_y > world_max_y;
-
-        if min_out_of_bounds {
+        // out of bounds
+        if tile_y > world_max_y {
             // early exit
+            // TODO: should this ever happen?
             *results = CombinedTestResults::OUTSIDE;
             return;
         }
 
-        let max_out_of_bounds = tile_max_y > world_max_y;
-
-        results.set_partial::<{ CombinedTestResults::HEIGHT_BIT }>(max_out_of_bounds);
+        // if height checks are on, we know that tiles at the maximum Y coord will be
+        // partially outside of the world.
+        results.set_partial::<{ CombinedTestResults::HEIGHT_BIT }>(tile_y == world_max_y);
     }
 
     // based on this algo

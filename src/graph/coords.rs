@@ -6,7 +6,7 @@ use super::{direction, i16x3, i32x3, i8x3, u16x3, u8x3, Coords3};
 use crate::math::*;
 
 pub struct GraphCoordSpace {
-    axis_lengths_in_tiles: u8x3,
+    pub axis_lengths_in_tiles: u8x3,
     axis_lengths_in_tiles_extended: u16x3,
     modulo_magics: u16x3,
     index_axis_scales: u16x3,

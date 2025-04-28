@@ -5,10 +5,12 @@
             "name": "(gdb) Attach",
             "type": "cppdbg",
             "request": "attach",
-            "processId": "${command:pickProcess}",
-            // replace this with the directory of your native
-            "program": "/home/ryan/Documents/projects/sodium-burger/common/src/main/resources/assets/sodium/natives/linux-x64-avx2+fma/libnative_cull.so",
+            // replace this with the directory of the java binary running the game
+            "program": "/home/ryan/.sdkman/candidates/java/21.0.6-tem/bin/java",
             "MIMode": "gdb",
+            "logging": {
+                "engineLogging": true
+            },
             "sourceFileMap": {
                 "${workspaceRoot}": {
                     "editorPath": "${workspaceRoot}",

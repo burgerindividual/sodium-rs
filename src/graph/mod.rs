@@ -31,12 +31,25 @@ macro_rules! iterate_dirs {
     }};
 }
 
+pub struct Tiles(Box<[Tile]>);
+
+impl Tiles {
+    fn get_mut(&mut self, index: LocalTileIndex) -> &mut Tile {
+        unsafe { self.0.get_unchecked_mut(index.to_usize()) }
+    }
+
+    fn get(&self, index: LocalTileIndex) -> &Tile {
+        unsafe { self.0.get_unchecked(index.to_usize()) }
+    }
+}
+
 pub struct Graph {
-    tiles: Box<[Tile]>,
+    tiles: Tiles,
 
     pub coord_space: GraphCoordSpace,
     do_height_checks: bool,
-    // TODO: add world height masks here
+    height_mask: u8x64,
+
     pub visible_tiles: Vec<FFIVisibleSectionsTile>,
 }
 
@@ -61,10 +74,9 @@ impl Graph {
 
         let graph_total_tiles = y_length_tiles as usize * (xz_length_tiles as usize).pow(2);
 
-        // Make sure graph bounds can be represented with i8 coordinates, and u16
-        // indices.
-        // TODO: should max axis length be smaller to prevent wrapping on step?
-        const MAX_AXIS_LENGTH: u16 = i8::MAX as u16 + 1;
+        // Make sure graph can be represented with i8 coordinates that won't wrap
+        // when going out-of-bounds, and u16 indices.
+        const MAX_AXIS_LENGTH: u16 = 64;
         const MAX_TOTAL_TILES: usize = u16::MAX as usize + 1;
         assert!(
             y_length_tiles <= MAX_AXIS_LENGTH && xz_length_tiles <= MAX_AXIS_LENGTH && graph_total_tiles <= MAX_TOTAL_TILES,
@@ -78,10 +90,16 @@ impl Graph {
                 tile_uninit.write(Default::default());
             }
 
-            tiles_uninit.assume_init()
+            Tiles(tiles_uninit.assume_init())
         };
 
-        let do_height_checks = y_length_sections % LocalTileCoords::LENGTH_IN_SECTIONS as u16 != 0;
+        let section_height_in_top_tile = y_length_sections % LocalTileCoords::LENGTH_IN_SECTIONS as u16;
+        let do_height_checks = section_height_in_top_tile != 0;
+        let height_mask = if do_height_checks {
+            tile::gen_height_mask(section_height_in_top_tile)
+        } else {
+            Simd::splat(!0)
+        };
 
         Self {
             tiles,
@@ -93,6 +111,7 @@ impl Graph {
                 world_top_section_y,
             ),
             do_height_checks,
+            height_mask,
             visible_tiles: Vec::with_capacity(128), // probably not a bad start
         }
     }
@@ -107,7 +126,7 @@ impl Graph {
         self.visible_tiles.clear();
 
         #[cfg(debug_assertions)]
-        for tile in &mut self.tiles {
+        for tile in &mut self.tiles.0 {
             tile.processed = false;
         }
     }
@@ -205,9 +224,9 @@ impl Graph {
             self.do_height_checks,
         );
 
-        // tile needs to be re-borrowed multiple times in this method, due to borrow
+        // tile needs to be re-borrowed multiple times in this method due to borrow
         // checker rules. these should get optimized out.
-        let tile = self.get_tile_mut(index);
+        let mut tile = self.tiles.get_mut(index);
 
         #[cfg(debug_assertions)]
         {
@@ -236,9 +255,9 @@ impl Graph {
             context.voxelize_fog_cylinder(relative_tile_pos, &mut tile.visible_sections);
         }
 
-        // if test_result.is_partial::<{ CombinedTestResults::HEIGHT_BIT }>() {
-        //     todo!();
-        // }
+        if test_result.is_partial::<{ CombinedTestResults::HEIGHT_BIT }>() {
+            tile.visible_sections &= self.height_mask;
+        }
 
         if context.use_occlusion_culling {
             let visibility_mask = tile.visible_sections;
@@ -249,23 +268,24 @@ impl Graph {
             // the center tile has no incoming directions, so there will be no data from
             // neighboring tiles. instead, we have to place the first set section manually.
             if INCOMING_DIRS == 0 {
-                let tile = self.get_tile_mut(index);
                 let section_index = tile::section_index(context.camera_section_in_tile);
 
                 tile::set_bit(&mut traverse_start_sections, section_index);
                 tile.setup_center_tile(section_index);
             } else {
+                // tile goes out of scope here so we can observe neighboring tiles
                 self.get_incoming_edges::<INCOMING_DIRS>(
                     coords,
                     visibility_mask,
                     &mut traverse_start_sections,
                     &mut incoming_dir_section_sets,
                 );
+                // we then re-borrow the tile here so we can use it again
+                tile = self.tiles.get_mut(index);
 
                 // FAST PATH: if we start the traversal with all 0s, we'll end with all 0s.
                 if traverse_start_sections == SECTIONS_EMPTY {
                     // early exit
-                    let tile = self.get_tile_mut(index);
                     tile.set_empty();
                     return;
                 }
@@ -277,7 +297,6 @@ impl Graph {
 
             let angle_visibility_masks = tile::gen_angle_visibility_masks(relative_tile_pos);
 
-            let tile = self.get_tile_mut(index);
             tile.traverse::<TRAVERSAL_DIRS>(
                 traverse_start_sections,
                 incoming_dir_section_sets,
@@ -289,8 +308,6 @@ impl Graph {
                 debug_assert_eq!(sections & visibility_mask, sections, "after traversal");
             }
         }
-
-        let tile = self.get_tile(index);
 
         if tile.visible_sections != SECTIONS_EMPTY {
             let local_section_coords = coords.0.cast::<i32>() << 3;
@@ -352,7 +369,7 @@ impl Graph {
     fn get_incoming_edge<const DIRECTION: u8>(&self, coords: LocalTileCoords) -> u8x64 {
         let neighbor_coords = coords.step(DIRECTION);
         let neighbor_index = self.coord_space.pack_index(neighbor_coords);
-        let neighbor_tile = self.get_tile(neighbor_index);
+        let neighbor_tile = self.tiles.get(neighbor_index);
 
         let neighbor_outgoing_sections =
             neighbor_tile.outgoing_dir_section_sets[to_index(opposite(DIRECTION))];
@@ -368,14 +385,6 @@ impl Graph {
         }
     }
 
-    fn get_tile_mut(&mut self, index: LocalTileIndex) -> &mut Tile {
-        unsafe { self.tiles.get_unchecked_mut(index.to_usize()) }
-    }
-
-    fn get_tile(&self, index: LocalTileIndex) -> &Tile {
-        unsafe { self.tiles.get_unchecked(index.to_usize()) }
-    }
-
     pub fn set_section(&mut self, section_coords: i32x3, visibility_data: u64) {
         let (tile_coords, section_coords_in_tile) =
             self.coord_space.section_to_tile_coords(section_coords);
@@ -388,7 +397,7 @@ impl Graph {
             section_coords, tile_coords.0, tile_index.0, section_index, visibility_data
         );
 
-        let tile = self.get_tile_mut(tile_index);
+        let tile = self.tiles.get_mut(tile_index);
 
         for (array_idx, &bit_idx) in ARRAY_TO_BIT_IDX.iter().enumerate() {
             tile::modify_bit(

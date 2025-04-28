@@ -39,8 +39,8 @@ strip = "symbols"
 
 [dependencies]
 # Using these dependencies directly gives us access to setting features.
-core_simd = { git = "https://github.com/burgerindividual/portable-simd.git" }
-std_float = { git = "https://github.com/burgerindividual/portable-simd.git" }
+core_simd = { git = "https://github.com/rust-lang/portable-simd.git" }
+std_float = { git = "https://github.com/rust-lang/portable-simd.git" }
 
 [dev-dependencies]
 rand = "0.9.0"

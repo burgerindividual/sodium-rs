@@ -358,44 +358,7 @@ pub fn voxelize_frustum_plane_slow(relative_tile_pos: f32x3, plane: f32x4) -> u8
     visible_sections
 }
 
-pub fn gen_outward_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRECTION_COUNT] {
-    let neg_x_lane = (0b10_u8 << camera_section_in_tile[X]).wrapping_sub(1);
-    let neg_x_mask = Simd::splat(neg_x_lane);
-
-    let pos_x_lane = 0xFF << camera_section_in_tile[X];
-    let pos_x_mask = Simd::splat(pos_x_lane);
-
-    let neg_y_bitmask = (0b10 << camera_section_in_tile[Y]) - 1;
-    let neg_y_mask = mask64x8::from_bitmask(neg_y_bitmask).to_int().to_ne_bytes();
-
-    // Mask is truncated to u8 by from_bitmask
-    let pos_y_bitmask = 0xFF << camera_section_in_tile[Y];
-    let pos_y_mask = mask64x8::from_bitmask(pos_y_bitmask).to_int().to_ne_bytes();
-
-    // native endianness should be correct here, but it's worth double checking
-    let neg_z_bitmask = (0b10 << camera_section_in_tile[Z]) - 1;
-    let neg_z_lane = u64::from_ne_bytes(
-        mask8x8::from_bitmask(neg_z_bitmask)
-            .to_int()
-            .to_ne_bytes()
-            .to_array(),
-    );
-    let neg_z_mask = u64x8::splat(neg_z_lane).to_ne_bytes();
-
-    let pos_z_bitmask = 0xFF << camera_section_in_tile[Z];
-    let pos_z_lane = u64::from_ne_bytes(
-        mask8x8::from_bitmask(pos_z_bitmask)
-            .to_int()
-            .to_ne_bytes()
-            .to_array(),
-    );
-    let pos_z_mask = u64x8::splat(pos_z_lane).to_ne_bytes();
-
-    [
-        neg_x_mask, neg_y_mask, neg_z_mask, pos_x_mask, pos_y_mask, pos_z_mask,
-    ]
-}
-
+// Code size is bloated when this gets inlined
 #[inline(never)]
 pub fn gen_angle_visibility_masks(relative_tile_pos: f32x3) -> [u8x64; 3] {
     let offsets = relative_tile_pos.mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(0.5));
@@ -590,6 +553,51 @@ pub fn rasterize_rows(lower_bound: f32x8, upper_bound: f32x8) -> (f32x8, f32x8, 
         lower_bound_mask,
         upper_bound_mask,
     )
+}
+
+pub fn gen_outward_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRECTION_COUNT] {
+    let neg_x_lane = (0b10_u8 << camera_section_in_tile[X]).wrapping_sub(1);
+    let neg_x_mask = Simd::splat(neg_x_lane);
+
+    let pos_x_lane = 0xFF << camera_section_in_tile[X];
+    let pos_x_mask = Simd::splat(pos_x_lane);
+
+    let neg_y_bitmask = (0b10 << camera_section_in_tile[Y]) - 1;
+    let neg_y_mask = mask64x8::from_bitmask(neg_y_bitmask).to_int().to_ne_bytes();
+
+    // Mask is truncated to u8 by from_bitmask
+    let pos_y_bitmask = 0xFF << camera_section_in_tile[Y];
+    let pos_y_mask = mask64x8::from_bitmask(pos_y_bitmask).to_int().to_ne_bytes();
+
+    // native endianness should be correct here, but it's worth double checking
+    let neg_z_bitmask = (0b10 << camera_section_in_tile[Z]) - 1;
+    let neg_z_lane = u64::from_ne_bytes(
+        mask8x8::from_bitmask(neg_z_bitmask)
+            .to_int()
+            .to_ne_bytes()
+            .to_array(),
+    );
+    let neg_z_mask = u64x8::splat(neg_z_lane).to_ne_bytes();
+
+    let pos_z_bitmask = 0xFF << camera_section_in_tile[Z];
+    let pos_z_lane = u64::from_ne_bytes(
+        mask8x8::from_bitmask(pos_z_bitmask)
+            .to_int()
+            .to_ne_bytes()
+            .to_array(),
+    );
+    let pos_z_mask = u64x8::splat(pos_z_lane).to_ne_bytes();
+
+    [
+        neg_x_mask, neg_y_mask, neg_z_mask, pos_x_mask, pos_y_mask, pos_z_mask,
+    ]
+}
+
+pub fn gen_height_mask(section_height_in_top_tile: u16) -> u8x64 {
+    let height_mask_small = (1_u8 << section_height_in_top_tile) - 1;
+    mask64x8::from_bitmask(height_mask_small as u64)
+        .to_int()
+        .to_le_bytes()
 }
 
 #[derive(Debug)]
