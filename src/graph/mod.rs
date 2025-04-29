@@ -93,7 +93,8 @@ impl Graph {
             Tiles(tiles_uninit.assume_init())
         };
 
-        let section_height_in_top_tile = y_length_sections % LocalTileCoords::LENGTH_IN_SECTIONS as u16;
+        let section_height_in_top_tile =
+            y_length_sections % LocalTileCoords::LENGTH_IN_SECTIONS as u16;
         let do_height_checks = section_height_in_top_tile != 0;
         let height_mask = if do_height_checks {
             tile::gen_height_mask(section_height_in_top_tile)
@@ -141,37 +142,35 @@ impl Graph {
 
         // Axes
         iterate_dirs!(self, context, POS_X);
-        iterate_dirs!(self, context, NEG_X);
         iterate_dirs!(self, context, POS_Z);
-        iterate_dirs!(self, context, NEG_Z);
         iterate_dirs!(self, context, POS_Y);
+        iterate_dirs!(self, context, NEG_X);
+        iterate_dirs!(self, context, NEG_Z);
         iterate_dirs!(self, context, NEG_Y);
 
         // Planes
-        iterate_dirs!(self, context, POS_X, POS_Y);
-        iterate_dirs!(self, context, NEG_X, POS_Y);
-        iterate_dirs!(self, context, POS_X, NEG_Y);
-        iterate_dirs!(self, context, NEG_X, NEG_Y);
-
-        iterate_dirs!(self, context, POS_X, POS_Z);
-        iterate_dirs!(self, context, NEG_X, POS_Z);
-        iterate_dirs!(self, context, POS_X, NEG_Z);
-        iterate_dirs!(self, context, NEG_X, NEG_Z);
-
-        iterate_dirs!(self, context, POS_Z, POS_Y);
-        iterate_dirs!(self, context, POS_Z, NEG_Y);
-        iterate_dirs!(self, context, NEG_Z, POS_Y);
-        iterate_dirs!(self, context, NEG_Z, NEG_Y);
+        iterate_dirs!(self, context, NEG_Y, POS_X);
+        iterate_dirs!(self, context, NEG_Z, POS_X);
+        iterate_dirs!(self, context, POS_Z, POS_X);
+        iterate_dirs!(self, context, POS_Y, POS_X);
+        iterate_dirs!(self, context, NEG_Y, POS_Z);
+        iterate_dirs!(self, context, POS_Y, POS_Z);
+        iterate_dirs!(self, context, POS_Y, NEG_X);
+        iterate_dirs!(self, context, POS_Z, NEG_X);
+        iterate_dirs!(self, context, NEG_Z, NEG_X);
+        iterate_dirs!(self, context, NEG_Y, NEG_X);
+        iterate_dirs!(self, context, POS_Y, NEG_Z);
+        iterate_dirs!(self, context, NEG_Y, NEG_Z);
 
         // Octants
-        iterate_dirs!(self, context, POS_X, POS_Z, POS_Y);
-        iterate_dirs!(self, context, NEG_X, POS_Z, POS_Y);
-        iterate_dirs!(self, context, NEG_X, POS_Z, NEG_Y);
-        iterate_dirs!(self, context, POS_X, POS_Z, NEG_Y);
-        iterate_dirs!(self, context, POS_X, NEG_Z, POS_Y);
-        iterate_dirs!(self, context, NEG_X, NEG_Z, POS_Y);
-        iterate_dirs!(self, context, NEG_X, NEG_Z, NEG_Y);
-        iterate_dirs!(self, context, POS_X, NEG_Z, NEG_Y);
+        iterate_dirs!(self, context, NEG_Y, NEG_Z, POS_X);
+        iterate_dirs!(self, context, NEG_Y, POS_Z, POS_X);
+        iterate_dirs!(self, context, POS_Y, NEG_Z, POS_X);
+        iterate_dirs!(self, context, POS_Y, POS_Z, POS_X);
+        iterate_dirs!(self, context, POS_Y, POS_Z, NEG_X);
+        iterate_dirs!(self, context, POS_Y, NEG_Z, NEG_X);
+        iterate_dirs!(self, context, NEG_Y, POS_Z, NEG_X);
+        iterate_dirs!(self, context, NEG_Y, NEG_Z, NEG_X);
     }
 
     /// dirs must not be empty when calling this
