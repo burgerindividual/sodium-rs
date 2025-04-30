@@ -238,28 +238,27 @@ impl Graph {
             tile.set_empty();
             return;
         }
-
-        tile.visible_sections = SECTIONS_FILLED;
+        // All sections are visible initially, and each culling method masks it
+        let mut visible_sections = SECTIONS_FILLED;
 
         let intersecting_planes = test_result.get_intersecting_planes();
         if intersecting_planes != 0 {
             context.frustum.voxelize_planes(
                 intersecting_planes,
                 relative_tile_pos,
-                &mut tile.visible_sections,
+                &mut visible_sections,
             );
         }
 
         if test_result.is_partial::<{ CombinedTestResults::FOG_BIT }>() {
-            context.voxelize_fog_cylinder(relative_tile_pos, &mut tile.visible_sections);
+            context.voxelize_fog_cylinder(relative_tile_pos, &mut visible_sections);
         }
 
         if test_result.is_partial::<{ CombinedTestResults::HEIGHT_BIT }>() {
-            tile.visible_sections &= self.height_mask;
+            visible_sections &= self.height_mask;
         }
 
         if context.use_occlusion_culling {
-            let visibility_mask = tile.visible_sections;
             let mut traverse_start_sections = SECTIONS_EMPTY;
             let mut incoming_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
             tile.outgoing_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
@@ -275,7 +274,7 @@ impl Graph {
                 // tile goes out of scope here so we can observe neighboring tiles
                 self.get_incoming_edges::<INCOMING_DIRS>(
                     coords,
-                    visibility_mask,
+                    visible_sections,
                     &mut traverse_start_sections,
                     &mut incoming_dir_section_sets,
                 );
@@ -296,27 +295,42 @@ impl Graph {
 
             let angle_visibility_masks = tile::gen_angle_visibility_masks(relative_tile_pos);
 
+            #[cfg(debug_assertions)]
+            let old_visible_sections = visible_sections;
+
             tile.traverse::<TRAVERSAL_DIRS>(
                 traverse_start_sections,
                 incoming_dir_section_sets,
                 &context.outward_direction_masks,
-                &angle_visibility_masks,
+                angle_visibility_masks,
+                &mut visible_sections,
             );
 
-            for sections in tile.outgoing_dir_section_sets {
-                debug_assert_eq!(sections & visibility_mask, sections, "after traversal");
+            #[cfg(debug_assertions)]
+            {
+                assert_eq!(
+                    visible_sections & old_visible_sections,
+                    visible_sections,
+                    "traversal added incorrect visible sections"
+                );
+                for sections in tile.outgoing_dir_section_sets {
+                    // TODO: should this be compared to old visible sections>
+                    assert_eq!(
+                        sections & visible_sections,
+                        sections,
+                        "traversal added incorrect outgoing dir sections"
+                    );
+                }
             }
         }
 
-        if tile.visible_sections != SECTIONS_EMPTY {
+        if visible_sections != SECTIONS_EMPTY {
             let local_section_coords = coords.0.cast::<i32>() << 3;
             let global_section_coords = context.global_section_offset + local_section_coords;
 
-            let visible_sections_ptr = &raw const tile.visible_sections;
-
             self.visible_tiles.push(FFIVisibleSectionsTile::new(
                 global_section_coords,
-                visible_sections_ptr,
+                visible_sections,
             ));
         }
     }

@@ -604,11 +604,10 @@ pub fn gen_height_mask(section_height_in_top_tile: u16) -> u8x64 {
 pub struct Tile {
     // Only changes on section update
     pub connection_section_sets: [u8x64; UNIQUE_CONNECTION_COUNT],
-
     // Changes every time tile is processed
     pub outgoing_dir_section_sets: [u8x64; DIRECTION_COUNT],
-    pub visible_sections: u8x64,
-
+    // visible_sections can be added back here to do visibility tests. for now, this is not
+    // necessary
     #[cfg(debug_assertions)]
     pub processed: bool,
 }
@@ -619,8 +618,6 @@ impl Default for Tile {
             // fully untraversable by default
             connection_section_sets: [SECTIONS_EMPTY; UNIQUE_CONNECTION_COUNT],
             outgoing_dir_section_sets: [SECTIONS_EMPTY; DIRECTION_COUNT],
-            // All sections are visible, and the culling methods mask parts of this
-            visible_sections: SECTIONS_FILLED,
             #[cfg(debug_assertions)]
             processed: false,
         }
@@ -630,19 +627,19 @@ impl Default for Tile {
 impl Tile {
     pub fn set_empty(&mut self) {
         self.outgoing_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
-        self.visible_sections = SECTIONS_EMPTY;
     }
 
-    // TODO: review all fast paths
-    // TODO: is it necessary to use tile_incoming_directions for the first
-    // iteration?
     pub fn traverse<const TRAVERSAL_DIRS: u8>(
         &mut self,
         start_sections: u8x64,
         mut incoming_dir_section_sets: [u8x64; DIRECTION_COUNT],
         outward_direction_masks: &[u8x64; DIRECTION_COUNT],
-        angle_visibility_masks: &[u8x64; 3],
+        angle_visibility_masks: [u8x64; 3],
+        visible_sections: &mut u8x64,
     ) {
+        // the result of the previous culling stages is used as a mask for the traversal
+        let main_visibility_mask = *visible_sections;
+
         // TODO OPT: consider changing this back to "for _ in 0..24" and measure
         loop {
             let mut incoming_changed = false;
@@ -651,36 +648,42 @@ impl Tile {
                 &mut incoming_dir_section_sets,
                 outward_direction_masks,
                 angle_visibility_masks,
+                main_visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_Y>(
                 &mut incoming_dir_section_sets,
                 outward_direction_masks,
                 angle_visibility_masks,
+                main_visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, NEG_Z>(
                 &mut incoming_dir_section_sets,
                 outward_direction_masks,
                 angle_visibility_masks,
+                main_visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_X>(
                 &mut incoming_dir_section_sets,
                 outward_direction_masks,
                 angle_visibility_masks,
+                main_visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_Y>(
                 &mut incoming_dir_section_sets,
                 outward_direction_masks,
                 angle_visibility_masks,
+                main_visibility_mask,
                 &mut incoming_changed,
             );
             self.try_traverse_dir::<TRAVERSAL_DIRS, POS_Z>(
                 &mut incoming_dir_section_sets,
                 outward_direction_masks,
                 angle_visibility_masks,
+                main_visibility_mask,
                 &mut incoming_changed,
             );
 
@@ -689,9 +692,7 @@ impl Tile {
             }
         }
 
-        // TODO: AND with existing visible nodes when there are more culling stages
-        //  okay so this happened, what do we do?
-        self.visible_sections = incoming_dir_section_sets
+        *visible_sections = incoming_dir_section_sets
             .iter()
             .fold(start_sections, |a, b| a | b);
     }
@@ -726,7 +727,8 @@ impl Tile {
         &mut self,
         incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
         outward_direction_masks: &[u8x64; DIRECTION_COUNT],
-        angle_visibility_masks: &[u8x64; 3],
+        angle_visibility_masks: [u8x64; 3],
+        main_visibility_mask: u8x64,
         incoming_changed: &mut bool,
     ) {
         if bitset::contains_u8(TRAVERSAL_DIRS, OUTGOING_DIR) {
@@ -749,7 +751,7 @@ impl Tile {
                 POS_Y => shift_pos_y(outgoing_sections),
                 POS_Z => shift_pos_z(outgoing_sections),
                 _ => unreachable!(),
-            } & self.visible_sections;
+            } & main_visibility_mask;
 
             // TODO: does this have to be an OR? I think the answer is yes
             let previous = incoming_dir_section_sets[opposite_dir_index];
