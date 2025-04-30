@@ -7,7 +7,6 @@ mod bitset;
 mod ffi;
 mod graph;
 mod math;
-mod mem;
 #[macro_use]
 mod panic;
 mod tests;

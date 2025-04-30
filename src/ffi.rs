@@ -8,9 +8,8 @@ use core_simd::simd::ToBytes;
 
 use crate::graph::*;
 use crate::math::*;
-use crate::mem::*;
+use crate::panic;
 use crate::panic::PanicHandlerFn;
-use crate::{mem, panic};
 
 type JEnv = core::ffi::c_void;
 type JClass = core::ffi::c_void;
@@ -49,23 +48,6 @@ impl FFIVisibleSectionsTile {
             visible_sections: u64x8::from_le_bytes(visible_sections).to_array(),
         }
     }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_setAllocator(
-    _: *mut JEnv,
-    _: *mut JClass,
-    aligned_alloc_fn_ptr: AlignedAllocFn,
-    aligned_free_fn_ptr: AlignedFreeFn,
-    realloc_fn_ptr: ReallocFn,
-    calloc_fn_ptr: CallocFn,
-) {
-    mem::set_allocator(LibcAllocVtable {
-        aligned_alloc_fn_ptr,
-        aligned_free_fn_ptr,
-        realloc_fn_ptr,
-        calloc_fn_ptr,
-    });
 }
 
 #[no_mangle]
