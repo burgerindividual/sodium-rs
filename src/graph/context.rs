@@ -102,7 +102,9 @@ impl GraphSearchContext {
             camera_tile_coords: LocalTileCoords(camera_tile_coords.cast::<i8>()),
             direction_step_counts,
             use_occlusion_culling,
-            outward_direction_masks: tile::gen_outward_direction_masks(camera_section_in_tile),
+            outward_direction_masks: traversal::gen_outward_direction_masks(
+                camera_section_in_tile,
+            ),
         }
     }
 

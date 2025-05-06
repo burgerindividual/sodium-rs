@@ -105,44 +105,6 @@ pub fn rasterize_rows(lower_bound: f32x8, upper_bound: f32x8) -> (f32x8, f32x8, 
     )
 }
 
-pub fn gen_outward_direction_masks(camera_section_in_tile: u8x3) -> [u8x64; DIRECTION_COUNT] {
-    let neg_x_lane = (0b10_u8 << camera_section_in_tile[X]).wrapping_sub(1);
-    let neg_x_mask = Simd::splat(neg_x_lane);
-
-    let pos_x_lane = 0xFF << camera_section_in_tile[X];
-    let pos_x_mask = Simd::splat(pos_x_lane);
-
-    let neg_y_bitmask = (0b10 << camera_section_in_tile[Y]) - 1;
-    let neg_y_mask = mask64x8::from_bitmask(neg_y_bitmask).to_int().to_ne_bytes();
-
-    // Mask is truncated to u8 by from_bitmask
-    let pos_y_bitmask = 0xFF << camera_section_in_tile[Y];
-    let pos_y_mask = mask64x8::from_bitmask(pos_y_bitmask).to_int().to_ne_bytes();
-
-    // native endianness should be correct here, but it's worth double checking
-    let neg_z_bitmask = (0b10 << camera_section_in_tile[Z]) - 1;
-    let neg_z_lane = u64::from_ne_bytes(
-        mask8x8::from_bitmask(neg_z_bitmask)
-            .to_int()
-            .to_ne_bytes()
-            .to_array(),
-    );
-    let neg_z_mask = u64x8::splat(neg_z_lane).to_ne_bytes();
-
-    let pos_z_bitmask = 0xFF << camera_section_in_tile[Z];
-    let pos_z_lane = u64::from_ne_bytes(
-        mask8x8::from_bitmask(pos_z_bitmask)
-            .to_int()
-            .to_ne_bytes()
-            .to_array(),
-    );
-    let pos_z_mask = u64x8::splat(pos_z_lane).to_ne_bytes();
-
-    [
-        neg_x_mask, neg_y_mask, neg_z_mask, pos_x_mask, pos_y_mask, pos_z_mask,
-    ]
-}
-
 #[derive(Debug)]
 pub struct Tile {
     // Only changes on section update
@@ -170,61 +132,5 @@ impl Default for Tile {
 impl Tile {
     pub fn set_empty(&mut self) {
         self.outgoing_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outward_direction_mask_test() {
-        for camera_x in 0..8 {
-            for camera_y in 0..8 {
-                for camera_z in 0..8 {
-                    let camera_tile_coords = u8x3::from_xyz(camera_x, camera_y, camera_z);
-
-                    let mut sane_camera_direction_masks = [SECTIONS_EMPTY; DIRECTION_COUNT];
-
-                    for tile_x in 0..8 {
-                        for tile_y in 0..8 {
-                            for tile_z in 0..8 {
-                                let other_tile_coords = Simd::from_xyz(tile_x, tile_y, tile_z);
-
-                                let negative = other_tile_coords.simd_le(camera_tile_coords);
-                                let positive = other_tile_coords.simd_ge(camera_tile_coords);
-                                let traversal_directions = negative.to_bitmask() as u8
-                                    | ((positive.to_bitmask() as u8) << 3);
-
-                                let section_index = section_index(other_tile_coords);
-                                for dir_idx in 0..6 {
-                                    modify_bit(
-                                        &mut sane_camera_direction_masks[dir_idx as usize],
-                                        section_index,
-                                        traversal_directions.get_bit(dir_idx),
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    let test_camera_direction_masks =
-                        gen_outward_direction_masks(camera_tile_coords);
-
-                    let mut directions = ALL_DIRECTIONS;
-                    while directions != 0 {
-                        let direction = take_one(&mut directions);
-                        let dir_idx = to_index(direction);
-                        assert_eq!(
-                            sane_camera_direction_masks[dir_idx],
-                            test_camera_direction_masks[dir_idx],
-                            "sane != test, Camera Coords: {:?}, Direction: {}",
-                            camera_tile_coords,
-                            to_str(direction)
-                        );
-                    }
-                }
-            }
-        }
     }
 }
