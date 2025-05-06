@@ -12,4 +12,8 @@
       return a tile with y bits set on the top, and don't do shifting with it. if below world height, yk what i mean
     - what do we do about the starting tile with this?
 [ ] Replicate what addNearbySections does
-[ ] Fix frustum rasterization sometimes being weird
+
+[x] Organize code by cull type, split out context and tests
+[ ] Clean up full-tile fog culling
+[ ] Fix bad frustum cull results, even if performance is degraded (use div, it's not the end of the world)
+[ ] Document code better

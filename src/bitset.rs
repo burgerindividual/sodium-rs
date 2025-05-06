@@ -1,12 +1,12 @@
 use std::hint::assert_unchecked;
 use std::ops::{BitAnd, BitOr, Not, Shl, Shr};
 
-pub const fn from_u8_slice(slice: &[u8]) -> u8 {
+pub const fn from_elements_u8(elements: &[u8]) -> u8 {
     let mut combined = 0;
 
     let mut i = 0;
-    while i < slice.len() {
-        combined |= slice[i];
+    while i < elements.len() {
+        combined |= elements[i];
         i += 1;
     }
 

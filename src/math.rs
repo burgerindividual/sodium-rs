@@ -22,11 +22,6 @@ pub type u16x3 = Simd<u16, 3>;
 pub type f32x3 = Simd<f32, 3>;
 pub type f64x3 = Simd<f64, 3>;
 
-// additional useful shorthands
-pub type u8x6 = Simd<u8, 6>;
-pub type f32x6 = Simd<f32, 6>;
-pub type u32x6 = Simd<u32, 6>;
-
 pub trait Coords3<T> {
     fn from_xyz(x: T, y: T, z: T) -> Self;
 }

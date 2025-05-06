@@ -152,3 +152,103 @@ impl LocalTileIndex {
         self.0 as usize
     }
 }
+
+/// Relative to the camera position
+#[derive(Clone, Copy)]
+pub struct RelativeBoundingBox {
+    pub(crate) min: f32x3,
+    pub(crate) max: f32x3,
+}
+
+impl RelativeBoundingBox {
+    pub const BOUNDING_BOX_EPSILON: f32 = 1.125;
+
+    pub fn new(min: f32x3, max: f32x3) -> Self {
+        Self {
+            max: max + f32x3::splat(Self::BOUNDING_BOX_EPSILON),
+            min: min - f32x3::splat(Self::BOUNDING_BOX_EPSILON),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::graph::direction::*;
+
+    #[test]
+    fn pack_index_test() {
+        let storage_distance = 20;
+        let y_length_sections = 24_u16;
+        let xz_length_sections = (storage_distance as u16 * 2) + 1;
+
+        let y_length_tiles = (y_length_sections.next_multiple_of(8) >> 3).max(2);
+        let xz_length_tiles = (xz_length_sections.next_multiple_of(8) >> 3).max(2);
+
+        let graph_total_tiles = y_length_tiles as u32 * (xz_length_tiles as u32).pow(2);
+
+        let coord_space = GraphCoordSpace::new(
+            xz_length_tiles as u8,
+            y_length_tiles as u8,
+            xz_length_tiles as u8,
+            -4,
+            19,
+        );
+        let mut index_coords_map = HashMap::<LocalTileIndex, LocalTileCoords>::new();
+
+        for y in 0..y_length_tiles {
+            for z in 0..xz_length_tiles {
+                for x in 0..xz_length_tiles {
+                    let coords = LocalTileCoords::from_xyz(x as i8, y as i8, z as i8);
+                    let index = coord_space.pack_index(coords);
+
+                    assert!(
+                        (index.0 as u32) < graph_total_tiles,
+                        "Index too large. Index: {:#018b}, Max: {:#018b}",
+                        index.0,
+                        graph_total_tiles
+                    );
+
+                    let entry = index_coords_map.get(&index);
+                    if let Some(&existing_coords) = entry {
+                        panic!(
+                            "Duplicate Tile Index Found: {:?}\nCoords: {:?} and {:?}",
+                            index.0, existing_coords.0, coords.0
+                        );
+                    } else {
+                        index_coords_map.insert(index, coords);
+                    }
+                }
+            }
+        }
+
+        // test a stray out of bounds index to see if it's handled
+        {
+            let coords = LocalTileCoords::from_xyz(-1, -1, -1);
+            let index = coord_space.pack_index(coords);
+            assert!(
+                (index.0 as u32) < graph_total_tiles,
+                "Index too large. Index: {:#018b}, Max: {:#018b}",
+                index.0,
+                graph_total_tiles
+            );
+        }
+
+        // test wrapping on edges
+    }
+
+    // TODO: make this automatic
+    #[test]
+    fn step_test() {
+        let coords = LocalTileCoords(Simd::from_xyz(10, 15, 31));
+
+        let mut direction_set = ALL_DIRECTIONS;
+        while direction_set != 0 {
+            let direction = take_one(&mut direction_set);
+            let stepped = coords.step(direction);
+            println!("{} {:?}", to_str(direction), stepped);
+        }
+    }
+}

@@ -2,7 +2,7 @@ use context::{CombinedTestResults, GraphSearchContext};
 use coords::{GraphCoordSpace, LocalTileIndex};
 use core_simd::simd::prelude::*;
 use direction::*;
-use tile::{Tile, SECTIONS_EMPTY, SECTIONS_FILLED};
+use tile::*;
 use visibility::*;
 
 use self::coords::LocalTileCoords;
@@ -19,7 +19,7 @@ pub mod visibility;
 macro_rules! iterate_dirs {
     ($graph:ident, $context:ident, $($dir:expr),+) => {{
         const DIRS_SLICE: &[u8] = &[$($dir),+];
-        const INCOMING_DIRS: u8 = opposite(bitset::from_u8_slice(DIRS_SLICE));
+        const INCOMING_DIRS: u8 = opposite(bitset::from_elements_u8(DIRS_SLICE));
         const TRAVERSAL_DIRS: u8 = all_except(INCOMING_DIRS);
 
         $graph.iterate_dirs(
@@ -97,7 +97,7 @@ impl Graph {
             y_length_sections % LocalTileCoords::LENGTH_IN_SECTIONS as u16;
         let do_height_checks = section_height_in_top_tile != 0;
         let height_mask = if do_height_checks {
-            tile::gen_height_mask(section_height_in_top_tile)
+            height::gen_mask(section_height_in_top_tile)
         } else {
             Simd::splat(!0)
         };
@@ -293,7 +293,7 @@ impl Graph {
             // traversed in this tile. because of this, we know atleast part of
             // it is visible.
 
-            let angle_visibility_masks = tile::gen_angle_visibility_masks(relative_tile_pos);
+            let angle_visibility_masks = angle::gen_visibility_masks(relative_tile_pos);
 
             #[cfg(debug_assertions)]
             let old_visible_sections = visible_sections;
@@ -302,7 +302,7 @@ impl Graph {
                 traverse_start_sections,
                 incoming_dir_section_sets,
                 &context.outward_direction_masks,
-                angle_visibility_masks,
+                &angle_visibility_masks,
                 &mut visible_sections,
             );
 
@@ -388,12 +388,12 @@ impl Graph {
             neighbor_tile.outgoing_dir_section_sets[to_index(opposite(DIRECTION))];
 
         match DIRECTION {
-            NEG_X => tile::edge_pos_to_neg_x(neighbor_outgoing_sections),
-            NEG_Y => tile::edge_pos_to_neg_y(neighbor_outgoing_sections),
-            NEG_Z => tile::edge_pos_to_neg_z(neighbor_outgoing_sections),
-            POS_X => tile::edge_neg_to_pos_x(neighbor_outgoing_sections),
-            POS_Y => tile::edge_neg_to_pos_y(neighbor_outgoing_sections),
-            POS_Z => tile::edge_neg_to_pos_z(neighbor_outgoing_sections),
+            NEG_X => tile::traversal::edge_pos_to_neg_x(neighbor_outgoing_sections),
+            NEG_Y => tile::traversal::edge_pos_to_neg_y(neighbor_outgoing_sections),
+            NEG_Z => tile::traversal::edge_pos_to_neg_z(neighbor_outgoing_sections),
+            POS_X => tile::traversal::edge_neg_to_pos_x(neighbor_outgoing_sections),
+            POS_Y => tile::traversal::edge_neg_to_pos_y(neighbor_outgoing_sections),
+            POS_Z => tile::traversal::edge_neg_to_pos_z(neighbor_outgoing_sections),
             _ => unreachable!(),
         }
     }
