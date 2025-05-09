@@ -117,18 +117,18 @@ impl GraphSearchContext {
     ) -> CombinedTestResults {
         let mut results = CombinedTestResults::ALL_INSIDE;
 
-        let relative_bounds = RelativeBoundingBox::new(
+        let bb = RelativeBoundingBox::new(
             relative_pos,
             relative_pos + Simd::splat(LocalTileCoords::LENGTH_IN_BLOCKS as f32),
         );
 
-        self.frustum.test_box(relative_bounds, &mut results);
+        self.frustum.test_box(bb, &mut results);
 
         if results == CombinedTestResults::OUTSIDE {
             // early exit
             return results;
         }
-        fog::test_box(relative_bounds, self.fog_distance, &mut results);
+        fog::test_box(bb, self.fog_distance, &mut results);
 
         if results == CombinedTestResults::OUTSIDE {
             // early exit

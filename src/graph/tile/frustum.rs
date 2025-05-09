@@ -6,14 +6,12 @@ use crate::graph::coords::RelativeBoundingBox;
 /// When using this, it is expected that coordinates are relative to the camera
 /// rather than the world origin.
 pub struct Frustum {
-    #[cfg(debug_assertions)]
     pub planes: [f32x4; DIRECTION_COUNT],
 
     // Plane data ordered component-wise rather than plane-wise. The contents are transposed from
     // the normal plane array
     planes_cw: [Simd<f32, DIRECTION_COUNT>; 4],
     pub(crate) plane_bb_offsets: [f32x3; DIRECTION_COUNT],
-    pub(crate) planes_scaled: [f32x4; DIRECTION_COUNT],
 }
 
 impl Frustum {
@@ -21,37 +19,23 @@ impl Frustum {
         let planes_cw = array::from_fn(|component_idx| {
             Simd::from_array(planes.map(|plane| plane[component_idx]))
         });
-        let plane_bb_offsets = planes.map(|plane| {
-            plane
-                .resize(Default::default())
-                .is_sign_negative_fast()
-                .select(
-                    Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-                    Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-                )
-        });
-        let planes_scaled = planes.map(|plane| {
-            let nonzero_plane_divisor = if plane[X] == 0.0 {
-                // avoids divide by 0 cases, while not being too small as to mess ratios between
-                // the planes
-                1e-15_f32.copysign(-plane[X])
-            } else {
-                plane[X] * -16.0
-            };
-            let mut plane_scaled = plane / Simd::splat(nonzero_plane_divisor);
-            // if plane[X] is positive, set plane_scaled[X] to all 1 bits. if plane[X] is
-            // negative, set plane_scaled[X] to all 0 bits
-            plane_scaled[X] = f32::from_bits(!((plane[X].to_bits() as i32) >> 31) as u32);
-            plane_scaled
-        });
+        let plane_bb_offsets = planes.map(|plane| Self::gen_plane_bb_offsets(plane));
 
         Frustum {
-            #[cfg(debug_assertions)]
             planes,
             planes_cw,
             plane_bb_offsets,
-            planes_scaled,
         }
+    }
+
+    fn gen_plane_bb_offsets(plane: f32x4) -> f32x3 {
+        plane
+            .resize(Default::default())
+            .is_sign_negative_fast()
+            .select(
+                Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+            )
     }
 
     // TODO OPT: get rid of W by normalizing plane_xs, ys, zs.
@@ -132,7 +116,7 @@ impl Frustum {
 
             let sections_in_plane = tile::frustum::voxelize_plane(
                 relative_tile_pos,
-                unsafe { *self.planes_scaled.get_unchecked(plane_idx) },
+                unsafe { *self.planes.get_unchecked(plane_idx) },
                 unsafe { *self.plane_bb_offsets.get_unchecked(plane_idx) },
             );
 
@@ -163,12 +147,15 @@ impl Frustum {
     }
 }
 
-fn voxelize_plane(relative_tile_pos: f32x3, plane_scaled: f32x4, plane_bb_offsets: f32x3) -> u8x64 {
+fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x3) -> u8x64 {
     let mut section_bb_offsets = relative_tile_pos + plane_bb_offsets;
 
-    // if plane[X] was positive, this will be all 1 bits. if plane[X] is negative,
+    // if plane[X] is negative, this will be all 1 bits. if plane[X] is positive,
     // this will be all 0 bits.
-    let plane_x_positive_mask = plane_scaled[X].to_bits() as i32;
+    let plane_x_negative_mask = Simd::splat(plane[X].to_bits() as i32 >> 31);
+    let plane_x_positive_mask = !plane_x_negative_mask;
+
+    let plane_x_scaled = Simd::splat(plane[X] * -16.0);
 
     Simd::from_slice(
         array::from_fn::<_, 8, _>(|_| {
@@ -176,12 +163,12 @@ fn voxelize_plane(relative_tile_pos: f32x3, plane_scaled: f32x4, plane_bb_offset
                 + Simd::splat(section_bb_offsets[Z]);
 
             let tile_x_positions = section_bb_zs.mul_add_fast(
-                Simd::splat(plane_scaled[Z]),
+                Simd::splat(plane[Z]),
                 Simd::splat(section_bb_offsets[X].mul_add_fast(
-                    const { -1.0 / 16.0 },
-                    section_bb_offsets[Y].mul_add_fast(plane_scaled[Y], plane_scaled[W]),
+                    plane[X],
+                    section_bb_offsets[Y].mul_add_fast(plane[Y], plane[W]),
                 )),
-            );
+            ) / plane_x_scaled;
 
             // Increment Y by length of section in blocks after usage of offsets
             section_bb_offsets += Simd::from_xyz(0.0, 16.0, 0.0);
@@ -199,15 +186,15 @@ fn voxelize_plane(relative_tile_pos: f32x3, plane_scaled: f32x4, plane_bb_offset
             // TODO: how does this work? why do we not need to unconditionally include the
             // section we derived? and why does this even work with negatives at all??
             // conditionally NOT part of the mask using an XOR
-            let tile_x_masks = (tile_x_shift - Simd::splat(1)) ^ Simd::splat(plane_x_positive_mask);
+            let tile_x_masks = (tile_x_shift - Simd::splat(1)) ^ plane_x_positive_mask;
 
-            let tile_x_masks_clamped = (tile_x_positions - Simd::splat(8.0))
-                .is_sign_positive_fast()
+            let tile_x_masks_clamped = tile_x_positions
+                .simd_ge(Simd::splat(8.0))
                 .select(
-                    !Simd::splat(plane_x_positive_mask),
+                    plane_x_negative_mask,
                     tile_x_positions
                         .is_sign_negative_fast()
-                        .select(Simd::splat(plane_x_positive_mask), tile_x_masks),
+                        .select(plane_x_positive_mask, tile_x_masks),
                 )
                 .cast();
 
@@ -247,53 +234,48 @@ fn voxelize_plane_slow(relative_tile_pos: f32x3, plane: f32x4) -> u8x64 {
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::TAU;
+
+    use rand::prelude::*;
+
     use super::*;
+    use crate::TESTS_RANDOM_SEED;
 
-    // TODO: automate this
     #[test]
-    fn frustum_voxelization_test() {
-        let relative_tile_pos = Simd::from_xyz(-168.475, -183.705, -63.434998);
+    fn plane_voxelization_test() {
+        const ITERATIONS: u32 = 10000;
+        let mut rand = StdRng::seed_from_u64(TESTS_RANDOM_SEED);
 
-        let frustum = Frustum::new([
-            Simd::from_array([-0.591241, -0.49853715, 0.6339517, 0.0]),
-            Simd::from_array([-0.23236583, 0.1140805, 0.96591496, 0.0]),
-            Simd::from_array([-0.19515383, -0.55120045, 0.81122935, -0.049999997]),
-            Simd::from_array([0.23822449, -0.49853715, 0.8334925, -0.0]),
-            Simd::from_array([-0.06662716, -0.9585686, 0.27696052, -0.0]),
-            Simd::from_array([0.1951034, 0.55120337, -0.81123954, 512.102]),
-        ]);
+        for _ in 0..ITERATIONS {
+            // generate random plane from random unit vector
+            let theta = rand.random_range(0.0..TAU);
+            let z: f32 = rand.random_range(-1.0..1.0);
+            let w: f32 = rand.random_range(-10.0..1000.0);
 
-        let mut failed = false;
-        let mut directions = ALL_DIRECTIONS;
-        while directions != 0 {
-            let direction = take_one(&mut directions);
-            let dir_idx = to_index(direction);
+            let z_modified = (1.0 - (z * z)).sqrt();
+            let x = z_modified * theta.cos();
+            let y = z_modified * theta.sin();
 
-            let sane_visible_sections =
-                frustum::voxelize_plane_slow(relative_tile_pos, frustum.planes[dir_idx]);
-            let test_visible_sections = frustum::voxelize_plane(
-                relative_tile_pos,
-                frustum.planes_scaled[dir_idx],
-                frustum.plane_bb_offsets[dir_idx],
+            let plane = Simd::from_array([x, y, z, w]);
+            let plane_bb_offsets = Frustum::gen_plane_bb_offsets(plane);
+
+            let relative_tile_pos = Simd::from_xyz(
+                rand.random_range(-3000.0_f32..3000.0_f32),
+                rand.random_range(-3000.0_f32..3000.0_f32),
+                rand.random_range(-3000.0_f32..3000.0_f32),
             );
 
-            if test_visible_sections == sane_visible_sections {
-                continue;
-            } else {
-                failed = true;
+            let sane_visible_sections = frustum::voxelize_plane_slow(relative_tile_pos, plane);
+            let test_visible_sections =
+                frustum::voxelize_plane(relative_tile_pos, plane, plane_bb_offsets);
+
+            if test_visible_sections != sane_visible_sections {
+                println!("Sane");
+                print_tile(&sane_visible_sections);
+
+                println!("Test");
+                print_tile(&test_visible_sections);
             }
-
-            let dir_str = to_str(direction);
-
-            println!("Plane {dir_str} - Sane");
-            print_tile(&sane_visible_sections);
-
-            println!("Plane {dir_str} - Test");
-            print_tile(&test_visible_sections);
-        }
-
-        if failed {
-            panic!();
         }
     }
 }

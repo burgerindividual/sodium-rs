@@ -4,21 +4,21 @@ use crate::graph::coords::RelativeBoundingBox;
 // based on this algorithm
 // https://github.com/CaffeineMC/sodium-fabric/blob/dd25399c139004e863beb8a2195b9d80b847d95c/common/src/main/java/net/caffeinemc/mods/sodium/client/render/chunk/occlusion/OcclusionCuller.java#L153
 pub fn test_box(
-    relative_bounds: RelativeBoundingBox,
+    bb: RelativeBoundingBox,
     fog_distance: f32,
     results: &mut CombinedTestResults,
 ) {
     // find closest to (0,0) because the bounding box coordinates are relative to
     // the camera
     let closest_in_chunk = f32x3::splat(0.0)
-        .simd_max(relative_bounds.min)
-        .simd_min(relative_bounds.max);
+        .simd_max(bb.min)
+        .simd_min(bb.max);
 
-    let furthest_in_chunk = relative_bounds
+    let furthest_in_chunk = bb
         .min
         .abs()
-        .simd_gt(relative_bounds.max.abs())
-        .select(relative_bounds.min, relative_bounds.max);
+        .simd_gt(bb.max.abs())
+        .select(bb.min, bb.max);
 
     // combine operations and single out the XZ lanes on both extrema from here.
     // also, we don't have to subtract from the camera pos because the bounds are
@@ -116,14 +116,14 @@ mod tests {
                     let relative_section_pos = section_coords
                         .cast::<f32>()
                         .mul_add_fast(Simd::splat(16.0), relative_tile_pos);
-                    let relative_bounds = RelativeBoundingBox::new(
+                    let bb = RelativeBoundingBox::new(
                         relative_section_pos,
                         relative_section_pos + Simd::splat(16.0),
                     );
 
                     let closest_in_chunk = f32x3::splat(0.0)
-                        .simd_max(relative_bounds.min)
-                        .simd_min(relative_bounds.max);
+                        .simd_max(bb.min)
+                        .simd_min(bb.max);
 
                     let distances_squared = closest_in_chunk * closest_in_chunk;
 

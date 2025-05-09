@@ -89,7 +89,7 @@ fn expand_xz_mask(compressed_mask: u8x8) -> u8x64 {
 }
 
 #[rustfmt::skip]
-pub fn expand_zy_mask(compressed_mask: u8x8) -> u8x64 {
+fn expand_zy_mask(compressed_mask: u8x8) -> u8x64 {
     const MASK: u8x64 = Simd::from_array([
         0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,
         0b1, 0b10, 0b100, 0b1000, 0b10000, 0b100000, 0b1000000, 0b10000000,

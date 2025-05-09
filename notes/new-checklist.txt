@@ -6,14 +6,13 @@
   - Maybe make all axis non-po2? Is it worth the perf hit?
 [x] Change direction iteration order to make access patterns more linear
 [x] Deal with worlds that don't have a height that aligns to a tile
+[x] Organize code by cull type, split out context and tests
+[x] Fix bad frustum cull results, even if performance is degraded (use div, it's not the end of the world)
 [ ] Fix being above or below world height
     - how do we handle iteration?
     - this could probably be done by doing something like this: in get_incoming_edge, if neighbor is above world height,
       return a tile with y bits set on the top, and don't do shifting with it. if below world height, yk what i mean
     - what do we do about the starting tile with this?
 [ ] Replicate what addNearbySections does
-
-[x] Organize code by cull type, split out context and tests
 [ ] Clean up full-tile fog culling
-[ ] Fix bad frustum cull results, even if performance is degraded (use div, it's not the end of the world)
 [ ] Document code better
