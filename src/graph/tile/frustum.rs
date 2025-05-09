@@ -6,12 +6,12 @@ use crate::graph::coords::RelativeBoundingBox;
 /// When using this, it is expected that coordinates are relative to the camera
 /// rather than the world origin.
 pub struct Frustum {
-    pub planes: [f32x4; DIRECTION_COUNT],
+    planes: [f32x4; DIRECTION_COUNT],
 
     // Plane data ordered component-wise rather than plane-wise. The contents are transposed from
     // the normal plane array
     planes_cw: [Simd<f32, DIRECTION_COUNT>; 4],
-    pub(crate) plane_bb_offsets: [f32x3; DIRECTION_COUNT],
+    plane_bb_offsets: [f32x3; DIRECTION_COUNT],
 }
 
 impl Frustum {
@@ -120,28 +120,6 @@ impl Frustum {
                 unsafe { *self.plane_bb_offsets.get_unchecked(plane_idx) },
             );
 
-            #[cfg(debug_assertions)]
-            {
-                use crate::graph::tile::print_tile;
-
-                let sane_sections_in_plane =
-                    tile::frustum::voxelize_plane_slow(relative_tile_pos, unsafe {
-                        *self.planes.get_unchecked(plane_idx)
-                    });
-                if sections_in_plane != sane_sections_in_plane {
-                    println!("Relative Coords: {:?}", relative_tile_pos);
-                    println!("Frustum: {:#?}", self.planes);
-
-                    let dir_str = to_str(plane_direction);
-                    println!("Plane {dir_str} - Sane");
-                    print_tile(&sane_sections_in_plane);
-                    println!("Plane {dir_str} - Fast");
-                    print_tile(&sections_in_plane);
-
-                    panic!("Mismatch between frustum plane voxel representations");
-                }
-            }
-
             *visible_sections &= sections_in_plane;
         }
     }
@@ -204,34 +182,6 @@ fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x
     )
 }
 
-fn voxelize_plane_slow(relative_tile_pos: f32x3, plane: f32x4) -> u8x64 {
-    let mut visible_sections = SECTIONS_EMPTY;
-
-    for y in 0..8 {
-        for z in 0..8 {
-            for x in 0..8 {
-                let min = u8x3::from_xyz(x, y, z)
-                    .cast::<f32>()
-                    .mul_add_fast(Simd::splat(16.0), relative_tile_pos);
-                let bb = RelativeBoundingBox::new(min, min + Simd::splat(16.0));
-
-                let not_outside = plane[X] * (if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] })
-                    + plane[Y] * (if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] })
-                    + plane[Z] * (if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] })
-                    >= -plane[W];
-
-                modify_bit(
-                    &mut visible_sections,
-                    section_index(Simd::from_xyz(x, y, z)),
-                    not_outside,
-                );
-            }
-        }
-    }
-
-    visible_sections
-}
-
 #[cfg(test)]
 mod tests {
     use std::f32::consts::TAU;
@@ -240,6 +190,35 @@ mod tests {
 
     use super::*;
     use crate::TESTS_RANDOM_SEED;
+
+    fn voxelize_plane_slow(relative_tile_pos: f32x3, plane: f32x4) -> u8x64 {
+        let mut visible_sections = SECTIONS_EMPTY;
+
+        for y in 0..8 {
+            for z in 0..8 {
+                for x in 0..8 {
+                    let min = u8x3::from_xyz(x, y, z)
+                        .cast::<f32>()
+                        .mul_add_fast(Simd::splat(16.0), relative_tile_pos);
+                    let bb = RelativeBoundingBox::new(min, min + Simd::splat(16.0));
+
+                    let not_outside = plane[X]
+                        * (if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] })
+                        + plane[Y] * (if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] })
+                        + plane[Z] * (if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] })
+                        >= -plane[W];
+
+                    modify_bit(
+                        &mut visible_sections,
+                        section_index(Simd::from_xyz(x, y, z)),
+                        not_outside,
+                    );
+                }
+            }
+        }
+
+        visible_sections
+    }
 
     #[test]
     fn plane_voxelization_test() {
@@ -265,9 +244,8 @@ mod tests {
                 rand.random_range(-3000.0_f32..3000.0_f32),
             );
 
-            let sane_visible_sections = frustum::voxelize_plane_slow(relative_tile_pos, plane);
-            let test_visible_sections =
-                frustum::voxelize_plane(relative_tile_pos, plane, plane_bb_offsets);
+            let sane_visible_sections = voxelize_plane_slow(relative_tile_pos, plane);
+            let test_visible_sections = voxelize_plane(relative_tile_pos, plane, plane_bb_offsets);
 
             if test_visible_sections != sane_visible_sections {
                 println!("Sane");
