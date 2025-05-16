@@ -9,10 +9,10 @@
 [x] Organize code by cull type, split out context and tests
 [x] Fix bad frustum cull results, even if performance is degraded (use div, it's not the end of the world)
 [ ] Fix being above or below world height
-    - how do we handle iteration?
-    - this could probably be done by doing something like this: in get_incoming_edge, if neighbor is above world height,
-      return a tile with y bits set on the top, and don't do shifting with it. if below world height, yk what i mean
-    - what do we do about the starting tile with this?
+    - what do we do for the starting tile when out of bounds?
+    - do we need to clamp the start tile position? probably only for some things.
+    - double-check the iteration step lengths are correct
+    - add assertions
 [ ] Replicate what addNearbySections does
 [ ] Clean up full-tile fog culling
 [ ] Document code better

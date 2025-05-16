@@ -2,7 +2,7 @@ use context::{CombinedTestResults, GraphSearchContext};
 use coords::{GraphCoordSpace, LocalTileIndex};
 use core_simd::simd::prelude::*;
 use direction::*;
-use tile::*;
+use tile::Tile;
 use visibility::*;
 
 use self::coords::LocalTileCoords;
@@ -48,7 +48,8 @@ pub struct Graph {
 
     pub coord_space: GraphCoordSpace,
     do_height_checks: bool,
-    height_mask: u8x64,
+    top_tile_visibility_mask: u8x64,
+    out_of_bounds_above_incoming: u8x64,
 
     pub visible_tiles: Vec<FFIVisibleSectionsTile>,
 }
@@ -96,8 +97,8 @@ impl Graph {
         let section_height_in_top_tile =
             y_length_sections % LocalTileCoords::LENGTH_IN_SECTIONS as u16;
         let do_height_checks = section_height_in_top_tile != 0;
-        let height_mask = if do_height_checks {
-            height::gen_mask(section_height_in_top_tile)
+        let top_tile_visibility_mask = if do_height_checks {
+            tile::height::gen_top_tile_visibility_mask(section_height_in_top_tile)
         } else {
             Simd::splat(!0)
         };
@@ -112,8 +113,11 @@ impl Graph {
                 world_top_section_y,
             ),
             do_height_checks,
-            height_mask,
-            visible_tiles: Vec::with_capacity(128), // probably not a bad start
+            top_tile_visibility_mask,
+            visible_tiles: Vec::with_capacity(128),
+            out_of_bounds_above_incoming: tile::height::gen_out_of_bounds_above_incoming_sections(
+                section_height_in_top_tile,
+            ),
         }
     }
 
@@ -239,7 +243,7 @@ impl Graph {
             return;
         }
         // All sections are visible initially, and each culling method masks it
-        let mut visible_sections = SECTIONS_FILLED;
+        let mut visible_sections = tile::SECTIONS_FILLED;
 
         let intersecting_planes = test_result.get_intersecting_planes();
         if intersecting_planes != 0 {
@@ -255,13 +259,13 @@ impl Graph {
         }
 
         if test_result.is_partial::<{ CombinedTestResults::HEIGHT_BIT }>() {
-            visible_sections &= self.height_mask;
+            visible_sections &= self.top_tile_visibility_mask;
         }
 
         if context.use_occlusion_culling {
-            let mut traverse_start_sections = SECTIONS_EMPTY;
-            let mut incoming_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
-            tile.outgoing_dir_section_sets = [SECTIONS_EMPTY; DIRECTION_COUNT];
+            let mut traverse_start_sections = tile::SECTIONS_EMPTY;
+            let mut incoming_dir_section_sets = [tile::SECTIONS_EMPTY; DIRECTION_COUNT];
+            tile.outgoing_dir_section_sets = [tile::SECTIONS_EMPTY; DIRECTION_COUNT];
 
             // the center tile has no incoming directions, so there will be no data from
             // neighboring tiles. instead, we have to place the first set section manually.
@@ -282,7 +286,7 @@ impl Graph {
                 tile = self.tiles.get_mut(index);
 
                 // FAST PATH: if we start the traversal with all 0s, we'll end with all 0s.
-                if traverse_start_sections == SECTIONS_EMPTY {
+                if traverse_start_sections == tile::SECTIONS_EMPTY {
                     // early exit
                     tile.set_empty();
                     return;
@@ -293,7 +297,7 @@ impl Graph {
             // traversed in this tile. because of this, we know atleast part of
             // it is visible.
 
-            let angle_visibility_masks = angle::gen_visibility_masks(relative_tile_pos);
+            let angle_visibility_masks = tile::angle::gen_visibility_masks(relative_tile_pos);
 
             #[cfg(debug_assertions)]
             let old_visible_sections = visible_sections;
@@ -324,7 +328,7 @@ impl Graph {
             }
         }
 
-        if visible_sections != SECTIONS_EMPTY {
+        if visible_sections != tile::SECTIONS_EMPTY {
             let local_section_coords = coords.0.cast::<i32>() << 3;
             let global_section_coords = context.global_section_offset + local_section_coords;
 
@@ -335,6 +339,7 @@ impl Graph {
         }
     }
 
+    // TODO: consider not using const generics for this
     fn get_incoming_edges<const INCOMING_DIRS: u8>(
         &self,
         coords: LocalTileCoords,
@@ -380,6 +385,13 @@ impl Graph {
     }
 
     fn get_incoming_edge<const DIRECTION: u8>(&self, coords: LocalTileCoords) -> u8x64 {
+        let top_tile_y = (self.coord_space.axis_lengths_in_tiles[Y] - 1) as i8;
+        if DIRECTION == POS_Y && coords[Y] >= top_tile_y {
+            return self.out_of_bounds_above_incoming;
+        } else if DIRECTION == NEG_Y && coords[Y] <= 0 {
+            return tile::OUT_OF_BOUNDS_BELOW_INCOMING_SECTIONS;
+        }
+
         let neighbor_coords = coords.step(DIRECTION);
         let neighbor_index = self.coord_space.pack_index(neighbor_coords);
         let neighbor_tile = self.tiles.get(neighbor_index);

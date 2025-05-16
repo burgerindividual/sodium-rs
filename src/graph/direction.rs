@@ -1,7 +1,6 @@
 // Directions and Direction Sets are represented as raw u8s to work seamlessly
 // with the current state of const generics.
 
-use std::hint::unreachable_unchecked;
 use std::num::NonZero;
 
 pub const NEG_X: u8 = 0b000001;
@@ -41,6 +40,7 @@ pub const fn take_one(direction_set: &mut u8) -> u8 {
     *direction_set ^ prev_set
 }
 
+#[cfg(test)]
 pub const fn to_str(direction: u8) -> &'static str {
     match direction {
         POS_X => "+X",
@@ -49,6 +49,6 @@ pub const fn to_str(direction: u8) -> &'static str {
         NEG_X => "-X",
         NEG_Y => "-Y",
         NEG_Z => "-Z",
-        _ => unsafe { unreachable_unchecked() },
+        _ => unreachable!(),
     }
 }

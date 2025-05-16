@@ -7,11 +7,11 @@ use crate::graph::coords::RelativeBoundingBox;
 /// rather than the world origin.
 pub struct Frustum {
     planes: [f32x4; DIRECTION_COUNT],
+    plane_bb_offsets: [f32x3; DIRECTION_COUNT],
 
     // Plane data ordered component-wise rather than plane-wise. The contents are transposed from
     // the normal plane array
     planes_cw: [Simd<f32, DIRECTION_COUNT>; 4],
-    plane_bb_offsets: [f32x3; DIRECTION_COUNT],
 }
 
 impl Frustum {
@@ -33,8 +33,8 @@ impl Frustum {
             .resize(Default::default())
             .is_sign_negative_fast()
             .select(
-                Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EPSILON),
-                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EPSILON),
+                Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EXTENSION),
+                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EXTENSION),
             )
     }
 
@@ -125,22 +125,23 @@ impl Frustum {
     }
 }
 
+// This function voxelizes one of the six planes that make up the frustum,
+// producing a 1 bit if the associated section is inside the plane (with a small
+// offset to ensure no false negatives), and a 0 bit if the associated section
+// is outside of the plane.
+// This function works by solving the plane equation for the X intercept on each
+// X-axis row of 8 sections. TODO: continue the comment
 fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x3) -> u8x64 {
     let mut section_bb_offsets = relative_tile_pos + plane_bb_offsets;
 
-    // if plane[X] is negative, this will be all 1 bits. if plane[X] is positive,
-    // this will be all 0 bits.
-    let plane_x_negative_mask = Simd::splat(plane[X].to_bits() as i32 >> 31);
-    let plane_x_positive_mask = !plane_x_negative_mask;
+    let plane_x_scaled = f32x8::splat(plane[X] * -16.0);
 
-    let plane_x_scaled = Simd::splat(plane[X] * -16.0);
-
-    Simd::from_slice(
-        array::from_fn::<_, 8, _>(|_| {
+    let tile_x_intercepts = u8x64::from_slice(
+        array::from_fn::<_, 8, _>(|_y| {
             let section_bb_zs = f32x8::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0])
                 + Simd::splat(section_bb_offsets[Z]);
 
-            let tile_x_positions = section_bb_zs.mul_add_fast(
+            let tile_x_intercepts = section_bb_zs.mul_add_fast(
                 Simd::splat(plane[Z]),
                 Simd::splat(section_bb_offsets[X].mul_add_fast(
                     plane[X],
@@ -151,35 +152,63 @@ fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x
             // Increment Y by length of section in blocks after usage of offsets
             section_bb_offsets += Simd::from_xyz(0.0, 16.0, 0.0);
 
-            let tile_x_positions_int = unsafe { tile_x_positions.to_int_unchecked::<i32>() };
+            // SAFETY: we check if the float value being converted is within the bounds 0 to
+            // 8 before using this value. in those cases, this should always produce a
+            // correct result.
+            let tile_x_intercepts_int = unsafe { tile_x_intercepts.to_int_unchecked::<i32>() };
 
-            #[cfg(target_feature = "avx2")]
-            let tile_x_shift: i32x8 = unsafe {
-                use std::arch::x86_64::*;
-                // this lets us skip having to mask tile_x_positions_int
-                _mm256_sllv_epi32(_mm256_set1_epi32(0b10), tile_x_positions_int.into()).into()
-            };
-            #[cfg(not(target_feature = "avx2"))]
-            let tile_x_shift = Simd::splat(0b10) << tile_x_positions_int;
-            // TODO: how does this work? why do we not need to unconditionally include the
-            // section we derived? and why does this even work with negatives at all??
-            // conditionally NOT part of the mask using an XOR
-            let tile_x_masks = (tile_x_shift - Simd::splat(1)) ^ plane_x_positive_mask;
-
-            let tile_x_masks_clamped = tile_x_positions
-                .simd_ge(Simd::splat(8.0))
+            let tile_x_intercepts_clamped = tile_x_intercepts
+                .simd_lt(Simd::splat(8.0))
                 .select(
-                    plane_x_negative_mask,
-                    tile_x_positions
-                        .is_sign_negative_fast()
-                        .select(plane_x_positive_mask, tile_x_masks),
+                    tile_x_intercepts.is_sign_negative_fast().select(
+                        Simd::splat(!0), // this index will result in all 0 bits for the mask
+                        tile_x_intercepts_int,
+                    ),
+                    Simd::splat(7), // this index will result in all 1 bits for the mask
                 )
                 .cast();
 
-            tile_x_masks_clamped.to_array()
+            tile_x_intercepts_clamped.to_array()
         })
         .as_flattened(),
-    )
+    );
+
+    #[cfg(target_feature = "avx2")]
+    let tile_x_masks = unsafe {
+        use std::arch::x86_64::*;
+
+        let intercepts_halves: [u8x32; 2] = [
+            tile_x_intercepts.extract::<0, 32>(),
+            tile_x_intercepts.extract::<32, 32>(),
+        ];
+
+        let mask_table = _mm256_set1_epi64x(i64::from_le_bytes([
+            0b1, 0b11, 0b111, 0b1111, 0b11111, 0b111111, 0b1111111, 0b11111111,
+        ]));
+        let shuffled_masks_halves: [u8x32; 2] = intercepts_halves
+            .map(|intercepts| _mm256_shuffle_epi8(mask_table, intercepts.into()).into());
+
+        simd_swizzle!(
+            shuffled_masks_halves[0],
+            shuffled_masks_halves[1],
+            concat_swizzle_pattern::<64>()
+        )
+    };
+
+    #[cfg(not(target_feature = "avx2"))]
+    let tile_x_masks = {
+        let in_bounds_masks = (Simd::splat(0b10) << tile_x_intercepts) - Simd::splat(1);
+        tile_x_intercepts
+            .simd_lt(Simd::splat(8))
+            .select(in_bounds_masks, Simd::splat(0))
+    };
+
+    // If plane[X] is positive, this will be all 1 bits. if plane[X] is negative,
+    // this will be all 0 bits. This is used to reverse the direction of the mask
+    // when needed.
+    let plane_x_positive_mask = Simd::splat(!(plane[X].to_bits() as i32 >> 31) as u8);
+
+    return tile_x_masks ^ plane_x_positive_mask;
 }
 
 #[cfg(test)]
@@ -191,28 +220,42 @@ mod tests {
     use super::*;
     use crate::TESTS_RANDOM_SEED;
 
-    fn voxelize_plane_slow(relative_tile_pos: f32x3, plane: f32x4) -> u8x64 {
+    fn voxelize_plane_slow(relative_tile_pos: f32x3, plane: f32x4, bounds_extension: f32) -> u8x64 {
         let mut visible_sections = SECTIONS_EMPTY;
 
         for y in 0..8 {
             for z in 0..8 {
                 for x in 0..8 {
-                    let min = u8x3::from_xyz(x, y, z)
+                    let section_coords = Simd::from_xyz(x, y, z);
+                    let section_index = section_index(section_coords);
+
+                    let relative_section_pos = section_coords
                         .cast::<f32>()
                         .mul_add_fast(Simd::splat(16.0), relative_tile_pos);
-                    let bb = RelativeBoundingBox::new(min, min + Simd::splat(16.0));
-
-                    let not_outside = plane[X]
-                        * (if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] })
-                        + plane[Y] * (if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] })
-                        + plane[Z] * (if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] })
-                        >= -plane[W];
-
-                    modify_bit(
-                        &mut visible_sections,
-                        section_index(Simd::from_xyz(x, y, z)),
-                        not_outside,
+                    let bb = RelativeBoundingBox::new(
+                        relative_section_pos - Simd::splat(bounds_extension),
+                        relative_section_pos + Simd::splat(16.0 + bounds_extension),
                     );
+
+                    // let not_outside = plane[X]
+                    //     * (if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] })
+                    //     + plane[Y] * (if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] })
+                    //     + plane[Z] * (if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] })
+                    //     >= -plane[W];
+
+                    // this should be a bit more accurate by using FMAs
+                    let not_outside = plane[X].mul_add(
+                        if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] },
+                        plane[Y].mul_add(
+                            if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] },
+                            plane[Z].mul_add(
+                                if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] },
+                                plane[W],
+                            ),
+                        ),
+                    ) >= 0.0;
+
+                    modify_bit(&mut visible_sections, section_index, not_outside);
                 }
             }
         }
@@ -244,15 +287,26 @@ mod tests {
                 rand.random_range(-3000.0_f32..3000.0_f32),
             );
 
-            let sane_visible_sections = voxelize_plane_slow(relative_tile_pos, plane);
+            let sane_visible_sections_min = voxelize_plane_slow(
+                relative_tile_pos,
+                plane,
+                RelativeBoundingBox::BOUNDING_BOX_EXTENSION_MIN,
+            );
+            let sane_visible_sections_max = voxelize_plane_slow(
+                relative_tile_pos,
+                plane,
+                RelativeBoundingBox::BOUNDING_BOX_EXTENSION_MAX,
+            );
             let test_visible_sections = voxelize_plane(relative_tile_pos, plane, plane_bb_offsets);
 
-            if test_visible_sections != sane_visible_sections {
-                println!("Sane");
-                print_tile(&sane_visible_sections);
-
-                println!("Test");
-                print_tile(&test_visible_sections);
+            if !test_minimum_maximum(
+                &sane_visible_sections_min,
+                &sane_visible_sections_max,
+                &test_visible_sections,
+            ) {
+                panic!(
+                    "Test results don't fit in sane bounds. Relative Tile Coords: {relative_tile_pos:?}, Plane: {plane:?}",
+                );
             }
         }
     }

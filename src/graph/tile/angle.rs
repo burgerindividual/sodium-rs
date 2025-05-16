@@ -192,8 +192,7 @@ mod tests {
                 print_tile(&test_masks[X]);
                 println!();
                 panic!(
-                    "sane != test, Relative Tile Coords: {:?}",
-                    relative_tile_pos,
+                    "sane != test, Relative Tile Coords: {relative_tile_pos:?}",
                 );
             }
         }

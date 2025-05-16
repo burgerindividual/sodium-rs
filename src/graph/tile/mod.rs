@@ -17,6 +17,12 @@ use crate::math::Coords3;
 pub const SECTIONS_EMPTY: u8x64 = Simd::splat(0);
 pub const SECTIONS_FILLED: u8x64 = Simd::splat(!0);
 
+pub const OUT_OF_BOUNDS_BELOW_INCOMING_SECTIONS: u8x64 = Simd::from_array([
+    255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0,
+]);
+
 pub fn section_index(coords: u8x3) -> u16 {
     debug_assert!(coords.simd_lt(Simd::splat(8)).all());
 
@@ -58,25 +64,6 @@ pub fn or_bit(sections: &mut u8x64, index: u16, value: bool) {
     byte.or_bit(bit_idx, value);
 }
 
-pub fn print_tile(sections: &u8x64) {
-    for y in 0..8 {
-        println!("↓Y{y}");
-        for z in 0..8 {
-            for x in 0..8 {
-                print!(
-                    "{}",
-                    if get_bit(sections, section_index(Simd::from_xyz(x, y, z))) {
-                        1_u8
-                    } else {
-                        0_u8
-                    }
-                );
-            }
-            println!(" Z{z}");
-        }
-    }
-}
-
 pub fn rasterize_rows(lower_bound: f32x8, upper_bound: f32x8) -> (f32x8, f32x8, u32x8, u32x8) {
     let lower_bound_ceil_clamped = lower_bound
         .ceil()
@@ -103,6 +90,67 @@ pub fn rasterize_rows(lower_bound: f32x8, upper_bound: f32x8) -> (f32x8, f32x8, 
         lower_bound_mask,
         upper_bound_mask,
     )
+}
+
+#[cfg(test)]
+pub fn print_tile(sections: &u8x64) {
+    for y in 0..8 {
+        println!("↓Y{y}");
+        for z in 0..8 {
+            for x in 0..8 {
+                print!(
+                    "{}",
+                    if get_bit(sections, section_index(Simd::from_xyz(x, y, z))) {
+                        1_u8
+                    } else {
+                        0_u8
+                    }
+                );
+            }
+            println!(" Z{z}");
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn test_minimum_maximum(
+    sane_visible_sections_min: &u8x64,
+    sane_visible_sections_max: &u8x64,
+    test_visible_sections: &u8x64,
+) -> bool {
+    let sections_outside_minimum =
+        (test_visible_sections & sane_visible_sections_min) ^ sane_visible_sections_min;
+    let sections_outside_maximum =
+        (test_visible_sections | sane_visible_sections_max) ^ sane_visible_sections_max;
+
+    let mut passed = true;
+
+    if sections_outside_minimum != SECTIONS_EMPTY {
+        println!("-------------- Outside minimum");
+        print_tile(&sections_outside_minimum);
+
+        println!("-------------- Minimum");
+        print_tile(&sane_visible_sections_min);
+
+        passed = false;
+    }
+
+    if sections_outside_maximum != SECTIONS_EMPTY {
+        println!("-------------- Outside maximum");
+        print_tile(&sections_outside_maximum);
+
+        println!("-------------- Maximum");
+        print_tile(&sane_visible_sections_max);
+
+        passed = false;
+    }
+
+    if !passed {
+        println!("-------------- Test results");
+        print_tile(&test_visible_sections);
+    }
+
+    passed
 }
 
 #[derive(Debug)]

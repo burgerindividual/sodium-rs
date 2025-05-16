@@ -52,6 +52,7 @@ impl GraphCoordSpace {
     }
 
     pub fn pack_index(&self, coords: LocalTileCoords) -> LocalTileIndex {
+        // TODO: add debug assertion bounds check here?
         let coords_extended = coords.0.cast::<i16>();
         // add -1 if negative
         let coords_shifted = coords_extended - (coords_extended >> 15);
@@ -66,6 +67,7 @@ impl GraphCoordSpace {
         LocalTileIndex((wrapped * self.index_axis_scales).reduce_sum())
     }
 
+    /// Converts global section coordinates to local tile coordinates
     pub fn section_to_tile_coords(&self, section_coords: i32x3) -> (LocalTileCoords, u8x3) {
         let shifted_coords =
             section_coords - i32x3::from_xyz(0, self.world_bottom_section_y as i32, 0);
@@ -78,6 +80,7 @@ impl GraphCoordSpace {
         (tile_coords, section_coords_in_tile)
     }
 
+    /// Converts global block coordinates to local block coordinates
     pub fn block_to_local_coords(&self, block_coords: i32x3) -> u16x3 {
         let world_bottom_block_y = (self.world_bottom_section_y as i32) << 4;
         let shifted_coords = block_coords - i32x3::from_xyz(0, world_bottom_block_y, 0);
@@ -88,13 +91,14 @@ impl GraphCoordSpace {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(align(8))] // speeds up packing and stepping slightly
+#[repr(align(8))]// speeds up packing and stepping slightly
 pub struct LocalTileCoords(pub i8x3);
 
 impl LocalTileCoords {
     pub const LENGTH_IN_BLOCKS: u8 = 128;
     pub const LENGTH_IN_SECTIONS: u8 = 8;
 
+    // TODO: debug assert that Y didn't wrap when doing this
     pub fn step(self, direction: u8) -> Self {
         // position a 1-byte mask within a 6-byte SWAR vector, with each of the 6 bytes
         // representing a direction
@@ -161,13 +165,22 @@ pub struct RelativeBoundingBox {
 }
 
 impl RelativeBoundingBox {
-    pub const BOUNDING_BOX_EPSILON: f32 = 1.125;
+    // add 1 block to account for large block models
+    pub const BOUNDING_BOX_EXTENSION_MIN: f32 = 1.0;
+    // add 0.125 blocks to account for float imprecision
+    pub const BOUNDING_BOX_EXTENSION: f32 = Self::BOUNDING_BOX_EXTENSION_MIN + 0.125;
+    // the maximum area that we allow float imprecision to add is 0.25 blocks
+    pub const BOUNDING_BOX_EXTENSION_MAX: f32 = Self::BOUNDING_BOX_EXTENSION_MIN + 0.25;
+
+    pub fn new_extended(min: f32x3, max: f32x3) -> Self {
+        Self {
+            max: max + f32x3::splat(Self::BOUNDING_BOX_EXTENSION),
+            min: min - f32x3::splat(Self::BOUNDING_BOX_EXTENSION),
+        }
+    }
 
     pub fn new(min: f32x3, max: f32x3) -> Self {
-        Self {
-            max: max + f32x3::splat(Self::BOUNDING_BOX_EPSILON),
-            min: min - f32x3::splat(Self::BOUNDING_BOX_EPSILON),
-        }
+        Self { max, min }
     }
 }
 
@@ -248,7 +261,7 @@ mod tests {
         while direction_set != 0 {
             let direction = take_one(&mut direction_set);
             let stepped = coords.step(direction);
-            println!("{} {:?}", to_str(direction), stepped);
+            println!("{} {stepped:?}", to_str(direction));
         }
     }
 }

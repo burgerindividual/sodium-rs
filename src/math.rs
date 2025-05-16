@@ -134,3 +134,15 @@ where
         unsafe { mod_f.to_int_unchecked() }
     }
 }
+
+pub const fn concat_swizzle_pattern<const LEN: usize>() -> [usize; LEN] {
+    let mut array = [0; LEN];
+
+    let mut i = 0;
+    while i < LEN {
+        array[i] = i;
+        i += 1;
+    }
+
+    array
+}

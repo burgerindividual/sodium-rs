@@ -3,22 +3,12 @@ use crate::graph::coords::RelativeBoundingBox;
 
 // based on this algorithm
 // https://github.com/CaffeineMC/sodium-fabric/blob/dd25399c139004e863beb8a2195b9d80b847d95c/common/src/main/java/net/caffeinemc/mods/sodium/client/render/chunk/occlusion/OcclusionCuller.java#L153
-pub fn test_box(
-    bb: RelativeBoundingBox,
-    fog_distance: f32,
-    results: &mut CombinedTestResults,
-) {
+pub fn test_box(bb: RelativeBoundingBox, fog_distance: f32, results: &mut CombinedTestResults) {
     // find closest to (0,0) because the bounding box coordinates are relative to
     // the camera
-    let closest_in_chunk = f32x3::splat(0.0)
-        .simd_max(bb.min)
-        .simd_min(bb.max);
+    let closest_in_chunk = f32x3::splat(0.0).simd_max(bb.min).simd_min(bb.max);
 
-    let furthest_in_chunk = bb
-        .min
-        .abs()
-        .simd_gt(bb.max.abs())
-        .select(bb.min, bb.max);
+    let furthest_in_chunk = bb.min.abs().simd_gt(bb.max.abs()).select(bb.min, bb.max);
 
     // combine operations and single out the XZ lanes on both extrema from here.
     // also, we don't have to subtract from the camera pos because the bounds are
@@ -47,26 +37,26 @@ pub fn test_box(
 }
 
 pub fn voxelize_cylinder(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {
-    const BB_EPSILON: f32 = RelativeBoundingBox::BOUNDING_BOX_EPSILON;
-    const BB_EPSILON_SCALED: f32 = BB_EPSILON / 16.0;
+    const BB_EXTENSION: f32 = RelativeBoundingBox::BOUNDING_BOX_EXTENSION;
+    const BB_EXTENSION_SCALED: f32 = BB_EXTENSION / 16.0;
 
     let section_zs = (f32x8::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0])
-        - Simd::splat(BB_EPSILON))
+        - Simd::splat(BB_EXTENSION))
         + Simd::splat(relative_tile_pos[Z]);
 
     let distance_zs = Simd::splat(0.0)
         .simd_max(section_zs)
-        .simd_min(section_zs + Simd::splat(16.0 + (BB_EPSILON * 2.0)));
+        .simd_min(section_zs + Simd::splat(16.0 + (BB_EXTENSION * 2.0)));
 
     let c_squared =
         distance_zs.mul_add_fast(-distance_zs, Simd::splat(fog_distance * fog_distance));
     let c = c_squared.sqrt();
 
     let upper_bound = (c - Simd::splat(relative_tile_pos[X]))
-        .mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(BB_EPSILON_SCALED));
+        .mul_add_fast(Simd::splat(1.0 / 16.0), Simd::splat(BB_EXTENSION_SCALED));
     let lower_bound = (c + Simd::splat(relative_tile_pos[X])).mul_add_fast(
         Simd::splat(-1.0 / 16.0),
-        Simd::splat(-1.0 - BB_EPSILON_SCALED),
+        Simd::splat(-1.0 - BB_EXTENSION_SCALED),
     );
 
     let (.., lower_bound_mask, upper_bound_mask) = rasterize_rows(lower_bound, upper_bound);
@@ -78,7 +68,7 @@ pub fn voxelize_cylinder(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {
     let y_lower_bound_mask = (0xFF_u32
         << unsafe {
             (-fog_distance - relative_tile_pos[Y])
-                .mul_add_fast(1.0 / 16.0, -BB_EPSILON_SCALED)
+                .mul_add_fast(1.0 / 16.0, -BB_EXTENSION_SCALED)
                 .floor()
                 .to_int_unchecked::<i32>()
                 .clamp(0, 8)
@@ -86,7 +76,7 @@ pub fn voxelize_cylinder(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {
     let y_upper_bound_mask = (0xFF_u32
         >> unsafe {
             8 - (fog_distance - relative_tile_pos[Y])
-                .mul_add_fast(1.0 / 16.0, BB_EPSILON_SCALED)
+                .mul_add_fast(1.0 / 16.0, BB_EXTENSION_SCALED)
                 .ceil()
                 .to_int_unchecked::<i32>()
                 .clamp(0, 8)
@@ -104,7 +94,11 @@ mod tests {
     use super::*;
     use crate::TESTS_RANDOM_SEED;
 
-    fn voxelize_cylinder_slow(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {
+    fn voxelize_cylinder_slow(
+        relative_tile_pos: f32x3,
+        fog_distance: f32,
+        bounds_extension: f32,
+    ) -> u8x64 {
         let mut visible_sections = SECTIONS_EMPTY;
 
         for y in 0..8 {
@@ -117,13 +111,11 @@ mod tests {
                         .cast::<f32>()
                         .mul_add_fast(Simd::splat(16.0), relative_tile_pos);
                     let bb = RelativeBoundingBox::new(
-                        relative_section_pos,
-                        relative_section_pos + Simd::splat(16.0),
+                        relative_section_pos - Simd::splat(bounds_extension),
+                        relative_section_pos + Simd::splat(16.0 + bounds_extension),
                     );
 
-                    let closest_in_chunk = f32x3::splat(0.0)
-                        .simd_max(bb.min)
-                        .simd_min(bb.max);
+                    let closest_in_chunk = f32x3::splat(0.0).simd_max(bb.min).simd_min(bb.max);
 
                     let distances_squared = closest_in_chunk * closest_in_chunk;
 
@@ -155,19 +147,25 @@ mod tests {
             );
             let fog_distance = rand.random_range(0.0_f32..900.0_f32);
 
-            let test_result = voxelize_cylinder(relative_tile_pos, fog_distance);
-            let sane_result = voxelize_cylinder_slow(relative_tile_pos, fog_distance);
+            let sane_visible_sections_min = voxelize_cylinder_slow(
+                relative_tile_pos,
+                fog_distance,
+                RelativeBoundingBox::BOUNDING_BOX_EXTENSION_MIN,
+            );
+            let sane_visible_sections_max = voxelize_cylinder_slow(
+                relative_tile_pos,
+                fog_distance,
+                RelativeBoundingBox::BOUNDING_BOX_EXTENSION_MAX,
+            );
+            let test_visible_sections = voxelize_cylinder(relative_tile_pos, fog_distance);
 
-            if sane_result != test_result {
-                println!("Sane Result");
-                print_tile(&sane_result);
-                println!();
-                println!("Test Result");
-                print_tile(&test_result);
-                println!();
+            if !test_minimum_maximum(
+                &sane_visible_sections_min,
+                &sane_visible_sections_max,
+                &test_visible_sections,
+            ) {
                 panic!(
-                    "sane != test, Relative Tile Coords: {:?}, Fog Distance: {fog_distance}",
-                    relative_tile_pos,
+                    "Test results don't fit in sane bounds. Relative Tile Coords: {relative_tile_pos:?}, Fog Distance: {fog_distance}",
                 );
             }
         }
