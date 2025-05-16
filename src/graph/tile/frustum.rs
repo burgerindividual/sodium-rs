@@ -16,15 +16,15 @@ pub struct Frustum {
 
 impl Frustum {
     pub fn new(planes: [f32x4; 6]) -> Self {
+        let plane_bb_offsets = planes.map(Self::gen_plane_bb_offsets);
         let planes_cw = array::from_fn(|component_idx| {
             Simd::from_array(planes.map(|plane| plane[component_idx]))
         });
-        let plane_bb_offsets = planes.map(|plane| Self::gen_plane_bb_offsets(plane));
 
         Frustum {
             planes,
-            planes_cw,
             plane_bb_offsets,
+            planes_cw,
         }
     }
 
@@ -114,7 +114,7 @@ impl Frustum {
             let plane_direction = take_one(&mut planes);
             let plane_idx = to_index(plane_direction);
 
-            let sections_in_plane = tile::frustum::voxelize_plane(
+            let sections_in_plane = voxelize_plane(
                 relative_tile_pos,
                 unsafe { *self.planes.get_unchecked(plane_idx) },
                 unsafe { *self.plane_bb_offsets.get_unchecked(plane_idx) },
@@ -208,7 +208,7 @@ fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x
     // when needed.
     let plane_x_positive_mask = Simd::splat(!(plane[X].to_bits() as i32 >> 31) as u8);
 
-    return tile_x_masks ^ plane_x_positive_mask;
+    tile_x_masks ^ plane_x_positive_mask
 }
 
 #[cfg(test)]

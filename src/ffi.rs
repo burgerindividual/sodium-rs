@@ -117,7 +117,7 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
         .expect("expected pointer to camera to be valid");
 
     let simd_camera_pos = Simd::from_array(camera.pos);
-    let simd_frustum_planes = camera.frustum_planes.map(|plane| Simd::from_array(plane));
+    let simd_frustum_planes = camera.frustum_planes.map(Simd::from_array);
 
     let context = GraphSearchContext::new(
         &graph.coord_space,
