@@ -91,7 +91,7 @@ impl GraphCoordSpace {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(align(8))]// speeds up packing and stepping slightly
+#[repr(align(8))] // speeds up packing and stepping slightly
 pub struct LocalTileCoords(pub i8x3);
 
 impl LocalTileCoords {

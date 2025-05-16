@@ -191,9 +191,7 @@ mod tests {
                 println!("Test Z Mask");
                 print_tile(&test_masks[X]);
                 println!();
-                panic!(
-                    "sane != test, Relative Tile Coords: {relative_tile_pos:?}",
-                );
+                panic!("sane != test, Relative Tile Coords: {relative_tile_pos:?}");
             }
         }
     }
