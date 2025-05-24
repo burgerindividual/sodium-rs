@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::boxed::Box;
+use std::ffi::c_void;
 
 use context::GraphSearchContext;
 use core_simd::simd::prelude::*;
@@ -11,8 +12,8 @@ use crate::math::*;
 use crate::panic;
 use crate::panic::PanicHandlerFn;
 
-type JEnv = core::ffi::c_void;
-type JClass = core::ffi::c_void;
+type JNIEnv = c_void;
+type JClass = c_void;
 
 #[repr(C)]
 pub struct FFISlice<T> {
@@ -52,7 +53,7 @@ impl FFIVisibleSectionsTile {
 
 #[no_mangle]
 pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_setPanicHandler(
-    _: *mut JEnv,
+    _: *mut JNIEnv,
     _: *mut JClass,
     panic_handler_fn_ptr: PanicHandlerFn,
 ) {
@@ -63,7 +64,7 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_setPanic
 
 #[no_mangle]
 pub extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphCreate(
-    _: *mut JEnv,
+    _: *mut JNIEnv,
     _: *mut JClass,
     render_distance: u8,
     world_bottom_section_y: i8,
@@ -80,7 +81,7 @@ pub extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphCreate(
 
 #[no_mangle]
 pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSetSection(
-    _: *mut JEnv,
+    _: *mut JNIEnv,
     _: *mut JClass,
     graph_ptr: *mut Graph,
     x: i32,
@@ -97,7 +98,7 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSet
 
 #[no_mangle]
 pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSearch(
-    _: *mut JEnv,
+    _: *mut JNIEnv,
     _: *mut JClass,
     return_value_ptr: *mut FFISlice<FFIVisibleSectionsTile>,
     graph_ptr: *mut Graph,
@@ -148,7 +149,7 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSea
 
 #[no_mangle]
 pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphDelete(
-    _: *mut JEnv,
+    _: *mut JNIEnv,
     _: *mut JClass,
     graph_ptr: *mut Graph,
 ) {

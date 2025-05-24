@@ -6,7 +6,7 @@ use crate::graph::coords::RelativeBoundingBox;
 pub fn test_box(bb: RelativeBoundingBox, fog_distance: f32, results: &mut CombinedTestResults) {
     // find closest to (0,0) because the bounding box coordinates are relative to
     // the camera
-    let closest_in_chunk = f32x3::splat(0.0).simd_max(bb.min).simd_min(bb.max);
+    let closest_in_chunk = f32x3::splat(0.0).simd_clamp_fast(bb.min, bb.max);
 
     let furthest_in_chunk = bb.min.abs().simd_gt(bb.max.abs()).select(bb.min, bb.max);
 
@@ -45,8 +45,8 @@ pub fn voxelize_cylinder(relative_tile_pos: f32x3, fog_distance: f32) -> u8x64 {
         + Simd::splat(relative_tile_pos[Z]);
 
     let distance_zs = Simd::splat(0.0)
-        .simd_max(section_zs)
-        .simd_min(section_zs + Simd::splat(16.0 + (BB_EXTENSION * 2.0)));
+        .simd_max_fast(section_zs)
+        .simd_min_fast(section_zs + Simd::splat(16.0 + (BB_EXTENSION * 2.0)));
 
     let c_squared =
         distance_zs.mul_add_fast(-distance_zs, Simd::splat(fog_distance * fog_distance));

@@ -1,4 +1,5 @@
 #![feature(portable_simd)]
+#![allow(dead_code)]
 
 mod bitset;
 mod ffi;

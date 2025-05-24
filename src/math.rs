@@ -108,12 +108,37 @@ where
     LaneCount<LANES>: SupportedLaneCount,
 {
     fn is_sign_positive_fast(self) -> Self::Mask {
-        // self.to_bits().simd_lt(Simd::splat(F32_SIGN_BIT))
         (self.to_bits() & Simd::splat(F32_SIGN_BIT)).simd_eq(Simd::splat(0))
     }
 
     fn is_sign_negative_fast(self) -> Self::Mask {
         (self.to_bits() & Simd::splat(F32_SIGN_BIT)).simd_eq(Simd::splat(F32_SIGN_BIT))
+    }
+}
+
+pub trait SimdOrdFast {
+    fn simd_min_fast(self, other: Self) -> Self;
+    fn simd_max_fast(self, other: Self) -> Self;
+    fn simd_clamp_fast(self, min: Self, max: Self) -> Self;
+}
+
+impl<const LANES: usize> SimdOrdFast for Simd<f32, LANES>
+where
+    LaneCount<LANES>: SupportedLaneCount,
+{
+    fn simd_min_fast(self, other: Self) -> Self {
+        self.simd_lt(other).select(self, other)
+    }
+
+    fn simd_max_fast(self, other: Self) -> Self {
+        self.simd_gt(other).select(self, other)
+    }
+
+    fn simd_clamp_fast(self, min: Self, max: Self) -> Self {
+        let mut x = self;
+        x = x.simd_lt(min).select(min, x);
+        x = x.simd_gt(max).select(max, x);
+        x
     }
 }
 

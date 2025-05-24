@@ -49,7 +49,7 @@ pub struct Graph {
     pub coord_space: GraphCoordSpace,
     do_height_checks: bool,
     top_tile_visibility_mask: u8x64,
-    out_of_bounds_above_incoming: u8x64,
+    oob_above_incoming_sections: u8x64,
 
     pub visible_tiles: Vec<FFIVisibleSectionsTile>,
 }
@@ -115,7 +115,7 @@ impl Graph {
             do_height_checks,
             top_tile_visibility_mask,
             visible_tiles: Vec::with_capacity(128),
-            out_of_bounds_above_incoming: tile::height::gen_out_of_bounds_above_incoming_sections(
+            oob_above_incoming_sections: tile::height::gen_oob_above_incoming_sections(
                 section_height_in_top_tile,
             ),
         }
@@ -387,7 +387,7 @@ impl Graph {
     fn get_incoming_edge<const DIRECTION: u8>(&self, coords: LocalTileCoords) -> u8x64 {
         let top_tile_y = (self.coord_space.axis_lengths_in_tiles[Y] - 1) as i8;
         if DIRECTION == POS_Y && coords[Y] >= top_tile_y {
-            return self.out_of_bounds_above_incoming;
+            return self.oob_above_incoming_sections;
         } else if DIRECTION == NEG_Y && coords[Y] <= 0 {
             return tile::OUT_OF_BOUNDS_BELOW_INCOMING_SECTIONS;
         }

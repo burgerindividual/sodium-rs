@@ -43,7 +43,7 @@ core_simd = { git = "https://github.com/rust-lang/portable-simd.git" }
 std_float = { git = "https://github.com/rust-lang/portable-simd.git" }
 
 [dev-dependencies]
-rand = "0.9.0"
+rand = "0.9.1"
 
 [features]
 default = ["panic_handler"]

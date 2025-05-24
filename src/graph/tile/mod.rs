@@ -12,7 +12,6 @@ use super::visibility::*;
 use super::{connection_index, u8x3, *};
 use crate::bitset;
 use crate::bitset::BitSet;
-use crate::math::Coords3;
 
 pub const SECTIONS_EMPTY: u8x64 = Simd::splat(0);
 pub const SECTIONS_FILLED: u8x64 = Simd::splat(!0);
@@ -126,7 +125,7 @@ pub fn test_minimum_maximum(
     let mut passed = true;
 
     if sections_outside_minimum != SECTIONS_EMPTY {
-        println!("-------------- Outside minimum");
+        println!("-------------- Below minimum");
         print_tile(&sections_outside_minimum);
 
         println!("-------------- Minimum");

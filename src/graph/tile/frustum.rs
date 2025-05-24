@@ -116,8 +116,8 @@ impl Frustum {
 
             let sections_in_plane = voxelize_plane(
                 relative_tile_pos,
-                unsafe { *self.planes.get_unchecked(plane_idx) },
-                unsafe { *self.plane_bb_offsets.get_unchecked(plane_idx) },
+                self.planes[plane_idx],
+                self.plane_bb_offsets[plane_idx],
             );
 
             *visible_sections &= sections_in_plane;
@@ -132,46 +132,60 @@ impl Frustum {
 // This function works by solving the plane equation for the X intercept on each
 // X-axis row of 8 sections. TODO: continue the comment
 fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x3) -> u8x64 {
-    let mut section_bb_offsets = relative_tile_pos + plane_bb_offsets;
+    // These increments are scaled 16x because sections are cubes with side lengths
+    // of 16 blocks.
+    const SECTION_INCREMENTS: f32x8 =
+        Simd::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0]);
 
-    let plane_x_scaled = f32x8::splat(plane[X] * -16.0);
+    let section_bb_offsets = relative_tile_pos + plane_bb_offsets;
+    let mut section_bb_y_offset = section_bb_offsets[Y];
 
-    let tile_x_intercepts = u8x64::from_slice(
+    // To simultaneously find 8 X intercepts at once, we vectorize across the Z
+    // axis. These offsets let us find the result at different section Z values.
+    let section_bb_zs = SECTION_INCREMENTS + Simd::splat(section_bb_offsets[Z]);
+
+    // cz + ax + d
+    let partial_intercept_setup = section_bb_zs.mul_add_fast(
+        Simd::splat(plane[Z]),
+        Simd::splat(section_bb_offsets[X].mul_add_fast(plane[X], plane[W])),
+    );
+
+    // -16a
+    let plane_x_scaled = Simd::splat(plane[X] * -16.0);
+
+    let tile_x_intercepts_expanded = i32x64::from_slice(
         array::from_fn::<_, 8, _>(|_y| {
-            let section_bb_zs = f32x8::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0])
-                + Simd::splat(section_bb_offsets[Z]);
-
-            let tile_x_intercepts = section_bb_zs.mul_add_fast(
-                Simd::splat(plane[Z]),
-                Simd::splat(section_bb_offsets[X].mul_add_fast(
-                    plane[X],
-                    section_bb_offsets[Y].mul_add_fast(plane[Y], plane[W]),
-                )),
-            ) / plane_x_scaled;
+            // (by + (cz + ax + d)) / (-16a)
+            let tile_x_intercepts = Simd::splat(section_bb_y_offset)
+                .mul_add_fast(Simd::splat(plane[Y]), partial_intercept_setup)
+                / plane_x_scaled;
 
             // Increment Y by length of section in blocks after usage of offsets
-            section_bb_offsets += Simd::from_xyz(0.0, 16.0, 0.0);
+            section_bb_y_offset += 16.0;
 
-            // SAFETY: we check if the float value being converted is within the bounds 0 to
-            // 8 before using this value. in those cases, this should always produce a
-            // correct result.
-            let tile_x_intercepts_int = unsafe { tile_x_intercepts.to_int_unchecked::<i32>() };
+            // SAFETY: we make sure the value going into the conversion is no larger than
+            // 7.0, and we check if the float value being converted is positive before using
+            // this value. in those cases, this should always produce a correct result.
+            let tile_x_intercepts_upper_bounded = unsafe {
+                tile_x_intercepts
+                    .simd_min_fast(Simd::splat(7.0))
+                    .to_int_unchecked::<i32>()
+            };
 
-            let tile_x_intercepts_clamped = tile_x_intercepts
-                .simd_lt(Simd::splat(8.0))
-                .select(
-                    tile_x_intercepts.is_sign_negative_fast().select(
-                        Simd::splat(!0), // this index will result in all 0 bits for the mask
-                        tile_x_intercepts_int,
-                    ),
-                    Simd::splat(7), // this index will result in all 1 bits for the mask
-                )
-                .cast();
+            // Fill lane with 1-bits if the intercept is negative. A lane with all 1-bits
+            // will result in a value of 0 in the generated mask.
+            let tile_x_intercepts_clamped = tile_x_intercepts_upper_bounded
+                | tile_x_intercepts.is_sign_negative_fast().to_int();
 
             tile_x_intercepts_clamped.to_array()
         })
         .as_flattened(),
     );
+
+    // Do a signed saturating cast, x86 has specific instructions for this.
+    let tile_x_intercepts = tile_x_intercepts_expanded
+        .simd_clamp(Simd::splat(i8::MIN).cast(), Simd::splat(i8::MAX).cast())
+        .cast::<u8>();
 
     #[cfg(target_feature = "avx2")]
     let tile_x_masks = unsafe {
@@ -200,12 +214,14 @@ fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x
         let in_bounds_masks = (Simd::splat(0b10) << tile_x_intercepts) - Simd::splat(1);
         tile_x_intercepts
             .simd_lt(Simd::splat(8))
-            .select(in_bounds_masks, Simd::splat(0))
+            .to_int()
+            .cast::<u8>()
+            & in_bounds_masks
     };
 
     // If plane[X] is positive, this will be all 1 bits. if plane[X] is negative,
     // this will be all 0 bits. This is used to reverse the direction of the mask
-    // when needed.
+    // when plane[X] is positive.
     let plane_x_positive_mask = Simd::splat(!(plane[X].to_bits() as i32 >> 31) as u8);
 
     tile_x_masks ^ plane_x_positive_mask
@@ -269,7 +285,8 @@ mod tests {
         let mut rand = StdRng::seed_from_u64(TESTS_RANDOM_SEED);
 
         for _ in 0..ITERATIONS {
-            // generate random plane from random unit vector
+            // generate random plane from random unit vector and random W component.
+            // based off of this math stackexchange answer: https://math.stackexchange.com/a/44691
             let theta = rand.random_range(0.0..TAU);
             let z: f32 = rand.random_range(-1.0..1.0);
             let w: f32 = rand.random_range(-10.0..1000.0);

@@ -32,8 +32,8 @@ fn gen_compressed_mask_pair(offset_1: f32, offset_2: f32) -> (u8x8, u8x8) {
     let line_1 = neg_x_offset + y_offset + ys;
     let line_2 = neg_x_offset - y_offset - ys;
 
-    let lower_bound = line_1.simd_min(line_2);
-    let upper_bound = line_1.simd_max(line_2);
+    let lower_bound = line_1.simd_min_fast(line_2);
+    let upper_bound = line_1.simd_max_fast(line_2);
 
     let (lower_bound_ceil_clamped, upper_bound_floor, lower_bound_mask, upper_bound_mask) =
         rasterize_rows(lower_bound, upper_bound);
