@@ -8,4 +8,4 @@ mod math;
 mod panic;
 
 #[cfg(test)]
-pub const TESTS_RANDOM_SEED: u64 = 0x0c41cf821df0e3a9;
+pub const TESTS_RANDOM_SEED: u64 = 0x1c41cf821df0e3a9;

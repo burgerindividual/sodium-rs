@@ -7,7 +7,7 @@ use crate::graph::coords::RelativeBoundingBox;
 /// rather than the world origin.
 pub struct Frustum {
     planes: [f32x4; DIRECTION_COUNT],
-    plane_bb_offsets: [f32x3; DIRECTION_COUNT],
+    axis_bb_offsets: [f32x3; DIRECTION_COUNT],
 
     // Plane data ordered component-wise rather than plane-wise. The contents are transposed from
     // the normal plane array
@@ -16,25 +16,27 @@ pub struct Frustum {
 
 impl Frustum {
     pub fn new(planes: [f32x4; 6]) -> Self {
-        let plane_bb_offsets = planes.map(Self::gen_plane_bb_offsets);
+        let axis_bb_offsets = planes.map(|plane| {
+            Self::gen_axis_bb_offsets(plane, RelativeBoundingBox::BOUNDING_BOX_EXTENSION)
+        });
         let planes_cw = array::from_fn(|component_idx| {
             Simd::from_array(planes.map(|plane| plane[component_idx]))
         });
 
         Frustum {
             planes,
-            plane_bb_offsets,
+            axis_bb_offsets,
             planes_cw,
         }
     }
 
-    fn gen_plane_bb_offsets(plane: f32x4) -> f32x3 {
+    fn gen_axis_bb_offsets(plane: f32x4, bounds_extension: f32) -> f32x3 {
         plane
             .resize(Default::default())
             .is_sign_negative_fast()
             .select(
-                Simd::splat(-RelativeBoundingBox::BOUNDING_BOX_EXTENSION),
-                Simd::splat(16.0 + RelativeBoundingBox::BOUNDING_BOX_EXTENSION),
+                Simd::splat(-bounds_extension),
+                Simd::splat(16.0 + bounds_extension),
             )
     }
 
@@ -117,7 +119,7 @@ impl Frustum {
             let sections_in_plane = voxelize_plane(
                 relative_tile_pos,
                 self.planes[plane_idx],
-                self.plane_bb_offsets[plane_idx],
+                self.axis_bb_offsets[plane_idx],
             );
 
             *visible_sections &= sections_in_plane;
@@ -129,25 +131,35 @@ impl Frustum {
 // producing a 1 bit if the associated section is inside the plane (with a small
 // offset to ensure no false negatives), and a 0 bit if the associated section
 // is outside of the plane.
+// The `axis_bb_offsets` vector will offset each bounding box axis depending on
+// the direction of the plane on that axis, and includes the small offset to
+// avoid false negatives.
 // This function works by solving the plane equation for the X intercept on each
-// X-axis row of 8 sections. TODO: continue the comment
-fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x3) -> u8x64 {
+// X-axis row of 8 sections. The intercept is then turned into a bitmask, which
+// fills all bits between index 0 and the index of the intercept. That bitmask
+// is optionally flipped depending on the sign of the X value of the plane,
+// which determines the direction the plane is pointing.
+// We vectorize this process with 8 lanes across the Z axis, and we do this
+// operation 8 times for each section on the Y axis. We extract as much work as
+// possible outside of the Y-axis loop, and specific optimzations regarding the
+// mask generation are implemented for x86 machines with AVX2.
+fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, axis_bb_offsets: f32x3) -> u8x64 {
     // These increments are scaled 16x because sections are cubes with side lengths
     // of 16 blocks.
     const SECTION_INCREMENTS: f32x8 =
         Simd::from_array([0.0, 16.0, 32.0, 48.0, 64.0, 80.0, 96.0, 112.0]);
 
-    let section_bb_offsets = relative_tile_pos + plane_bb_offsets;
-    let mut section_bb_y_offset = section_bb_offsets[Y];
+    let tile_bb_origin = relative_tile_pos + axis_bb_offsets;
+    let mut section_bb_y_offset = tile_bb_origin[Y];
 
     // To simultaneously find 8 X intercepts at once, we vectorize across the Z
     // axis. These offsets let us find the result at different section Z values.
-    let section_bb_zs = SECTION_INCREMENTS + Simd::splat(section_bb_offsets[Z]);
+    let section_bb_zs = SECTION_INCREMENTS + Simd::splat(tile_bb_origin[Z]);
 
     // cz + ax + d
     let partial_intercept_setup = section_bb_zs.mul_add_fast(
         Simd::splat(plane[Z]),
-        Simd::splat(section_bb_offsets[X].mul_add_fast(plane[X], plane[W])),
+        Simd::splat(tile_bb_origin[X].mul_add_fast(plane[X], plane[W])),
     );
 
     // -16a
@@ -163,9 +175,9 @@ fn voxelize_plane(relative_tile_pos: f32x3, plane: f32x4, plane_bb_offsets: f32x
             // Increment Y by length of section in blocks after usage of offsets
             section_bb_y_offset += 16.0;
 
-            // SAFETY: we make sure the value going into the conversion is no larger than
-            // 7.0, and we check if the float value being converted is positive before using
-            // this value. in those cases, this should always produce a correct result.
+            // SAFETY: We make sure the value going into the conversion is no larger than
+            // 7.0. For values under 0.0, we mask out the poison values before using the
+            // output.
             let tile_x_intercepts_upper_bounded = unsafe {
                 tile_x_intercepts
                     .simd_min_fast(Simd::splat(7.0))
@@ -253,23 +265,11 @@ mod tests {
                         relative_section_pos + Simd::splat(16.0 + bounds_extension),
                     );
 
-                    // let not_outside = plane[X]
-                    //     * (if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] })
-                    //     + plane[Y] * (if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] })
-                    //     + plane[Z] * (if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] })
-                    //     >= -plane[W];
-
-                    // this should be a bit more accurate by using FMAs
-                    let not_outside = plane[X].mul_add(
-                        if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] },
-                        plane[Y].mul_add(
-                            if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] },
-                            plane[Z].mul_add(
-                                if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] },
-                                plane[W],
-                            ),
-                        ),
-                    ) >= 0.0;
+                    let not_outside = plane[X]
+                        * (if plane[X] < 0.0 { bb.min[X] } else { bb.max[X] })
+                        + plane[Y] * (if plane[Y] < 0.0 { bb.min[Y] } else { bb.max[Y] })
+                        + plane[Z] * (if plane[Z] < 0.0 { bb.min[Z] } else { bb.max[Z] })
+                        >= -plane[W];
 
                     modify_bit(&mut visible_sections, section_index, not_outside);
                 }
@@ -296,7 +296,8 @@ mod tests {
             let y = z_modified * theta.sin();
 
             let plane = Simd::from_array([x, y, z, w]);
-            let plane_bb_offsets = Frustum::gen_plane_bb_offsets(plane);
+            let plane_bb_offsets =
+                Frustum::gen_axis_bb_offsets(plane, RelativeBoundingBox::BOUNDING_BOX_EXTENSION);
 
             let relative_tile_pos = Simd::from_xyz(
                 rand.random_range(-3000.0_f32..3000.0_f32),
