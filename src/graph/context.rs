@@ -5,6 +5,7 @@ use super::coords::RelativeBoundingBox;
 use super::tile::frustum::Frustum;
 use crate::graph::*;
 
+// TODO: move camera into its own struct
 pub struct GraphSearchContext {
     pub frustum: Frustum,
 
@@ -14,14 +15,14 @@ pub struct GraphSearchContext {
 
     // the camera coords (in blocks) relative to the local origin, which is the (0, 0, 0) point of
     // the graph. the representation here is slightly different than the representation in
-    // CameraTransform.java, as camera_pos_frac can never be negative in our representation.
-    pub camera_pos_int: u16x3,
+    // CameraTransform.java, as camera_pos_frac can never be negative here.
+    pub camera_pos_int: i32x3,
     pub camera_pos_frac: f32x3,
     pub camera_area: CameraArea,
 
     pub camera_section_in_tile: u8x3,
 
-    pub camera_tile_coords: LocalTileCoords,
+    pub iter_start_tile_coords: LocalTileCoords,
     pub direction_step_counts: Simd<u8, DIRECTION_COUNT>,
 
     pub use_occlusion_culling: bool,
@@ -37,10 +38,17 @@ impl GraphSearchContext {
         search_distance: f32,
         use_occlusion_culling: bool,
     ) -> Self {
-        // TODO: check against graph size
-        // TODO: assert search distance size isn't too big
-        // TODO: assert camera pos isn't ridiculous
-        // TODO: deal with camera above and below world
+        assert!(
+            search_distance >= 0.0,
+            "Search distance must not be negative - Search Distance: {search_distance}"
+        );
+
+        let max_search_distance =
+            coord_space.xz_length_tiles as f32 * LocalTileCoords::LENGTH_IN_BLOCKS as f32;
+        assert!(
+            search_distance <= max_search_distance,
+            "Search distance exceeds maximum for graph - Search Distance: {search_distance}, Maximum: {max_search_distance}"
+        );
 
         let frustum = Frustum::new(frustum_planes);
 
@@ -51,7 +59,8 @@ impl GraphSearchContext {
             + PRECISION_MODIFIER)
             - PRECISION_MODIFIER;
 
-        // Safety: We check if the conversion was lossless directly after the operation
+        // Safety: We check if the conversion was lossless directly after the operation.
+        // This should catch any particularly stupid camera positions.
         let global_camera_pos_int = unsafe { global_camera_pos_floor.to_int_unchecked::<i32>() };
         assert_eq!(
             global_camera_pos_int.cast::<f64>(),
@@ -60,18 +69,19 @@ impl GraphSearchContext {
         );
 
         let local_camera_pos_int = coord_space.block_to_local_coords(global_camera_pos_int);
-        let global_section_offset =
-            (global_camera_pos_int - local_camera_pos_int.cast::<i32>()) >> 4;
-        let camera_tile_coords = (local_camera_pos_int >> 7).cast::<u8>();
+        let global_section_offset = (global_camera_pos_int - local_camera_pos_int) >> 4;
+        let local_camera_pos = local_camera_pos_int.cast::<f64>() + camera_pos_frac.cast::<f64>();
 
-        let local_camera_pos = local_camera_pos_int.cast::<f32>() + camera_pos_frac;
+        let mut iter_start_tile_coords = (local_camera_pos_int >> 7).cast::<i8>();
 
         let global_top_block_y = ((coord_space.world_top_section_y as i32 + 1) << 4) - 1;
         let global_bottom_block_y = (coord_space.world_bottom_section_y as i32) << 4;
 
         let camera_area = if global_camera_pos_int[Y] > global_top_block_y {
+            iter_start_tile_coords[Y] = coord_space.y_length_tiles as i8;
             CameraArea::Above
         } else if global_camera_pos_int[Y] < global_bottom_block_y {
+            iter_start_tile_coords[Y] = -1;
             CameraArea::Below
         } else {
             CameraArea::Inside
@@ -79,24 +89,25 @@ impl GraphSearchContext {
 
         let local_top_block_y = (global_top_block_y - global_bottom_block_y) as u16;
 
-        // TODO: make sure this works out of bounds
-        let positive_step_counts = unsafe {
-            ((local_camera_pos + Simd::splat(search_distance))
-                .to_int_unchecked::<u16>()
-                .simd_min(Simd::from_xyz(u16::MAX, local_top_block_y, u16::MAX))
-                >> 7)
+        let positive_step_counts = {
+            let mut iter_end_block = (local_camera_pos + Simd::splat(search_distance as f64))
+                .floor()
+                .cast::<u16>();
+            iter_end_block[Y] = iter_end_block[Y].clamp(0, local_top_block_y);
+            let iter_end_tile = iter_end_block >> 7;
+            (iter_end_tile.cast::<i16>() - iter_start_tile_coords.cast::<i16>())
+                .max(Simd::splat(0))
                 .cast::<u8>()
-                - camera_tile_coords
         };
-        // we cast from f32 to i16 to u8 here. this is to allow underflowing, as we
-        // want an underflow to wrap around on the X and Z axis
-        let negative_step_counts = unsafe {
-            camera_tile_coords
-                - ((local_camera_pos - Simd::splat(search_distance))
-                    .to_int_unchecked::<i16>()
-                    .simd_max(Simd::from_xyz(i16::MIN, 0, i16::MIN))
-                    >> 7)
-                    .cast::<u8>()
+        let negative_step_counts = {
+            let mut iter_end_block = (local_camera_pos - Simd::splat(search_distance as f64))
+                .floor()
+                .cast::<i16>();
+            iter_end_block[Y] = iter_end_block[Y].clamp(0, local_top_block_y as i16);
+            let iter_end_tile = iter_end_block >> 7;
+            (iter_start_tile_coords.cast::<i16>() - iter_end_tile)
+                .max(Simd::splat(0))
+                .cast::<u8>()
         };
 
         let direction_step_counts = simd_swizzle!(
@@ -115,7 +126,7 @@ impl GraphSearchContext {
             camera_pos_frac,
             camera_area,
             camera_section_in_tile,
-            camera_tile_coords: LocalTileCoords(camera_tile_coords.cast::<i8>()),
+            iter_start_tile_coords: LocalTileCoords(iter_start_tile_coords),
             direction_step_counts,
             use_occlusion_culling,
             outward_direction_masks: tile::traversal::gen_outward_direction_masks(
@@ -159,7 +170,7 @@ impl GraphSearchContext {
     }
 
     pub fn relative_tile_pos(&self, coords: LocalTileCoords) -> f32x3 {
-        let pos_int = coords.to_local_block_coords() - self.camera_pos_int.cast::<i16>();
+        let pos_int = coords.to_local_block_coords() - self.camera_pos_int;
         pos_int.cast::<f32>() - self.camera_pos_frac
     }
 
@@ -201,6 +212,7 @@ impl CombinedTestResults {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
 pub enum CameraArea {
     Inside,
     Above,

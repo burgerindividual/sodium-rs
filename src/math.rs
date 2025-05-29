@@ -15,6 +15,7 @@ pub const F32_SIGN_BIT: u32 = 1 << 31;
 pub type i8x3 = Simd<i8, 3>;
 pub type i16x3 = Simd<i16, 3>;
 pub type i32x3 = Simd<i32, 3>;
+pub type u32x3 = Simd<u32, 3>;
 
 pub type u8x3 = Simd<u8, 3>;
 pub type u16x3 = Simd<u16, 3>;

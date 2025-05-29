@@ -655,7 +655,7 @@ mod tests {
         for camera_x in 0..8 {
             for camera_y in 0..8 {
                 for camera_z in 0..8 {
-                    let camera_tile_coords = u8x3::from_xyz(camera_x, camera_y, camera_z);
+                    let camera_section_in_tile = u8x3::from_xyz(camera_x, camera_y, camera_z);
 
                     let mut sane_camera_direction_masks = [SECTIONS_EMPTY; DIRECTION_COUNT];
 
@@ -664,8 +664,8 @@ mod tests {
                             for tile_z in 0..8 {
                                 let other_tile_coords = Simd::from_xyz(tile_x, tile_y, tile_z);
 
-                                let negative = other_tile_coords.simd_le(camera_tile_coords);
-                                let positive = other_tile_coords.simd_ge(camera_tile_coords);
+                                let negative = other_tile_coords.simd_le(camera_section_in_tile);
+                                let positive = other_tile_coords.simd_ge(camera_section_in_tile);
                                 let traversal_directions = negative.to_bitmask() as u8
                                     | ((positive.to_bitmask() as u8) << 3);
 
@@ -682,7 +682,7 @@ mod tests {
                     }
 
                     let test_camera_direction_masks =
-                        gen_outward_direction_masks(camera_tile_coords);
+                        gen_outward_direction_masks(camera_section_in_tile);
 
                     let mut directions = ALL_DIRECTIONS;
                     while directions != 0 {
@@ -692,7 +692,7 @@ mod tests {
                             sane_camera_direction_masks[dir_idx],
                             test_camera_direction_masks[dir_idx],
                             "sane != test, Camera Coords: {:?}, Direction: {}",
-                            camera_tile_coords,
+                            camera_section_in_tile,
                             to_str(direction)
                         );
                     }

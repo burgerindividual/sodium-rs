@@ -6,11 +6,11 @@
             "type": "cppdbg",
             "request": "attach",
             // replace this with the directory of the java binary running the game
-            "program": "/home/ryan/.sdkman/candidates/java/21.0.6-tem/bin/java",
+            "program": "/home/ryan/.sdkman/candidates/java/current/bin/java",
             "MIMode": "gdb",
-            "logging": {
-                "engineLogging": true
-            },
+            // "logging": {
+            //     "engineLogging": true
+            // },
             "sourceFileMap": {
                 "${workspaceRoot}": {
                     "editorPath": "${workspaceRoot}",

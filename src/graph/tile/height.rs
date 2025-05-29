@@ -6,7 +6,7 @@ pub fn test_coords(
     results: &mut CombinedTestResults,
 ) {
     let tile_y = coords[Y];
-    let world_max_y = (coord_space.axis_lengths_in_tiles[Y] - 1) as i8;
+    let world_max_y = (coord_space.y_length_tiles - 1) as i8;
 
     // out of bounds
     if tile_y > world_max_y {

@@ -1,4 +1,4 @@
-use context::{CombinedTestResults, GraphSearchContext};
+use context::{CameraArea, CombinedTestResults, GraphSearchContext};
 use coords::{GraphCoordSpace, LocalTileIndex};
 use core_simd::simd::prelude::*;
 use direction::*;
@@ -22,12 +22,14 @@ macro_rules! iterate_dirs {
         const INCOMING_DIRS: u8 = opposite(bitset::from_elements_u8(DIRS_SLICE));
         const TRAVERSAL_DIRS: u8 = all_except(INCOMING_DIRS);
 
-        $graph.iterate_dirs(
-            $context,
-            $context.camera_tile_coords,
-            DIRS_SLICE,
-            Self::process_tile::<INCOMING_DIRS, TRAVERSAL_DIRS>,
-        );
+        if Graph::should_process::<INCOMING_DIRS>($context.camera_area) {
+            $graph.iterate_dirs(
+                $context,
+                $context.iter_start_tile_coords,
+                DIRS_SLICE,
+                Self::process_tile::<INCOMING_DIRS, TRAVERSAL_DIRS>,
+            );
+        }
     }};
 }
 
@@ -106,7 +108,6 @@ impl Graph {
         Self {
             tiles,
             coord_space: GraphCoordSpace::new(
-                xz_length_tiles as u8,
                 y_length_tiles as u8,
                 xz_length_tiles as u8,
                 world_bottom_section_y,
@@ -138,11 +139,13 @@ impl Graph {
 
     fn iterate_tiles(&mut self, context: &GraphSearchContext) {
         // Center
-        self.process_tile::<0, ALL_DIRECTIONS>(
-            context,
-            self.coord_space.pack_index(context.camera_tile_coords),
-            context.camera_tile_coords,
-        );
+        if Self::should_process::<0>(context.camera_area) {
+            self.process_tile::<0, ALL_DIRECTIONS>(
+                context,
+                self.coord_space.pack_index(context.iter_start_tile_coords),
+                context.iter_start_tile_coords,
+            );
+        }
 
         // Axes
         iterate_dirs!(self, context, POS_X);
@@ -177,7 +180,7 @@ impl Graph {
         iterate_dirs!(self, context, NEG_Y, NEG_Z, NEG_X);
     }
 
-    /// dirs must not be empty when calling this
+    /// `dirs` must not be empty when calling this
     #[inline(never)]
     fn iterate_dirs(
         &mut self,
@@ -203,6 +206,14 @@ impl Graph {
             } else {
                 self.iterate_dirs(context, coords, &dirs[1..], process_tile_fn);
             }
+        }
+    }
+
+    fn should_process<const INCOMING_DIRS: u8>(camera_area: CameraArea) -> bool {
+        match camera_area {
+            CameraArea::Inside => true,
+            CameraArea::Above => bitset::contains_u8(INCOMING_DIRS, direction::POS_Y),
+            CameraArea::Below => bitset::contains_u8(INCOMING_DIRS, direction::NEG_Y),
         }
     }
 
@@ -278,6 +289,7 @@ impl Graph {
                 // tile goes out of scope here so we can observe neighboring tiles
                 self.get_incoming_edges::<INCOMING_DIRS>(
                     coords,
+                    context.camera_area,
                     visible_sections,
                     &mut traverse_start_sections,
                     &mut incoming_dir_section_sets,
@@ -343,53 +355,73 @@ impl Graph {
     fn get_incoming_edges<const INCOMING_DIRS: u8>(
         &self,
         coords: LocalTileCoords,
+        camera_area: CameraArea,
         visibility_mask: u8x64,
         traverse_start_sections: &mut u8x64,
         incoming_dir_section_sets: &mut [u8x64; DIRECTION_COUNT],
     ) {
         if bitset::contains_u8(INCOMING_DIRS, NEG_X) {
-            let incoming_edge = self.get_incoming_edge::<NEG_X>(coords) & visibility_mask;
+            let incoming_edge =
+                self.get_incoming_edge::<NEG_X>(coords, camera_area) & visibility_mask;
             *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(NEG_X)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, NEG_Y) {
-            let incoming_edge = self.get_incoming_edge::<NEG_Y>(coords) & visibility_mask;
+            let incoming_edge =
+                self.get_incoming_edge::<NEG_Y>(coords, camera_area) & visibility_mask;
             *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(NEG_Y)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, NEG_Z) {
-            let incoming_edge = self.get_incoming_edge::<NEG_Z>(coords) & visibility_mask;
+            let incoming_edge =
+                self.get_incoming_edge::<NEG_Z>(coords, camera_area) & visibility_mask;
             *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(NEG_Z)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, POS_X) {
-            let incoming_edge = self.get_incoming_edge::<POS_X>(coords) & visibility_mask;
+            let incoming_edge =
+                self.get_incoming_edge::<POS_X>(coords, camera_area) & visibility_mask;
             *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(POS_X)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, POS_Y) {
-            let incoming_edge = self.get_incoming_edge::<POS_Y>(coords) & visibility_mask;
+            let incoming_edge =
+                self.get_incoming_edge::<POS_Y>(coords, camera_area) & visibility_mask;
             *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(POS_Y)] = incoming_edge;
         }
 
         if bitset::contains_u8(INCOMING_DIRS, POS_Z) {
-            let incoming_edge = self.get_incoming_edge::<POS_Z>(coords) & visibility_mask;
+            let incoming_edge =
+                self.get_incoming_edge::<POS_Z>(coords, camera_area) & visibility_mask;
             *traverse_start_sections |= incoming_edge;
             incoming_dir_section_sets[to_index(POS_Z)] = incoming_edge;
         }
     }
 
-    fn get_incoming_edge<const DIRECTION: u8>(&self, coords: LocalTileCoords) -> u8x64 {
-        let top_tile_y = (self.coord_space.axis_lengths_in_tiles[Y] - 1) as i8;
-        if DIRECTION == POS_Y && coords[Y] >= top_tile_y {
-            return self.oob_above_incoming_sections;
-        } else if DIRECTION == NEG_Y && coords[Y] <= 0 {
-            return tile::OUT_OF_BOUNDS_BELOW_INCOMING_SECTIONS;
+    fn get_incoming_edge<const DIRECTION: u8>(
+        &self,
+        coords: LocalTileCoords,
+        camera_area: CameraArea,
+    ) -> u8x64 {
+        // deal with fetching edge from out-of-bounds
+        let top_tile_y = (self.coord_space.y_length_tiles - 1) as i8;
+        if DIRECTION == POS_Y && coords[Y] == top_tile_y {
+            if camera_area == CameraArea::Above {
+                return self.oob_above_incoming_sections;
+            } else {
+                return tile::SECTIONS_EMPTY;
+            }
+        } else if DIRECTION == NEG_Y && coords[Y] == 0 {
+            if camera_area == CameraArea::Below {
+                return tile::OUT_OF_BOUNDS_BELOW_INCOMING_SECTIONS;
+            } else {
+                return tile::SECTIONS_EMPTY;
+            }
         }
 
         let neighbor_coords = coords.step(DIRECTION);
@@ -413,6 +445,14 @@ impl Graph {
     pub fn set_section(&mut self, section_coords: i32x3, visibility_data: u64) {
         let (tile_coords, section_coords_in_tile) =
             self.coord_space.section_to_tile_coords(section_coords);
+
+        assert!(
+            self.coord_space.tile_coords_in_bounds(tile_coords),
+            "Tile Y coordinate out of bounds - Y: {}, Graph Height: {}",
+            tile_coords[Y],
+            self.coord_space.y_length_tiles,
+        );
+
         let tile_index = self.coord_space.pack_index(tile_coords);
         let section_index = tile::section_index(section_coords_in_tile);
 

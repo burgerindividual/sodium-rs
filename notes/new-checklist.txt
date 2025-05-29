@@ -8,11 +8,11 @@
 [x] Deal with worlds that don't have a height that aligns to a tile
 [x] Organize code by cull type, split out context and tests
 [x] Fix bad frustum cull results, even if performance is degraded (use div, it's not the end of the world)
-[ ] Fix being above or below world height
+[x] Fix being above or below world height
     - what do we do for the starting tile when out of bounds?
     - do we need to clamp the start tile position? probably only for some things.
     - double-check the iteration step lengths are correct
     - add assertions
 [ ] Replicate what addNearbySections does
 [ ] Clean up full-tile fog culling
-[ ] Document code better
+[-] Document code better
