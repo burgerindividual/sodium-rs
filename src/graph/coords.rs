@@ -63,9 +63,8 @@ impl GraphCoordSpace {
     }
 
     pub fn tile_coords_in_bounds(&self, coords: LocalTileCoords) -> bool {
-        // we can do an unsigned compare here because y_length_tiles should always be
-        // less than 128
-        (coords[Y] as u8) < self.y_length_tiles
+        let y = coords[Y] as i16;
+        (y >= 0) & (y < self.y_length_tiles as i16)
     }
 
     /// Calculates the tile coordinates in the graph and the section coordinates
