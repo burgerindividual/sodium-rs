@@ -37,12 +37,12 @@ pub struct FFICamera {
 }
 
 #[repr(C)]
-pub struct FFIVisibleSectionsTile {
+pub struct FFITile {
     pub origin_section_coords: [i32; 3],
     pub visible_sections: [u64; 8],
 }
 
-impl FFIVisibleSectionsTile {
+impl FFITile {
     pub fn new(origin_section_coords: i32x3, visible_sections: u8x64) -> Self {
         Self {
             origin_section_coords: origin_section_coords.to_array(),
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSet
 pub unsafe extern "C" fn Java_net_caffeinemc_mods_sodium_ffi_NativeCull_graphSearch(
     _: *mut JNIEnv,
     _: *mut JClass,
-    return_value_ptr: *mut FFISlice<FFIVisibleSectionsTile>,
+    return_value_ptr: *mut FFISlice<FFITile>,
     graph_ptr: *mut Graph,
     camera_ptr: *const FFICamera,
     search_distance: f32,

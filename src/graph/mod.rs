@@ -7,7 +7,7 @@ use visibility::*;
 
 use self::coords::LocalTileCoords;
 use crate::bitset::{self, BitSet};
-use crate::ffi::FFIVisibleSectionsTile;
+use crate::ffi::FFITile;
 use crate::math::*;
 
 pub mod context;
@@ -53,7 +53,7 @@ pub struct Graph {
     top_tile_visibility_mask: u8x64,
     oob_above_incoming_sections: u8x64,
 
-    pub visible_tiles: Vec<FFIVisibleSectionsTile>,
+    pub visible_tiles: Vec<FFITile>,
 }
 
 impl Graph {
@@ -344,10 +344,8 @@ impl Graph {
             let local_section_coords = coords.0.cast::<i32>() << 3;
             let global_section_coords = context.global_section_offset + local_section_coords;
 
-            self.visible_tiles.push(FFIVisibleSectionsTile::new(
-                global_section_coords,
-                visible_sections,
-            ));
+            self.visible_tiles
+                .push(FFITile::new(global_section_coords, visible_sections));
         }
     }
 
